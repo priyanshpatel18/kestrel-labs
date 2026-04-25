@@ -1,61 +1,63 @@
 "use client";
 
 import type { MarketCloseOutcome } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
-function directionFromWinner(winner: string): "up" | "down" | null {
+function direction(winner: string): "up" | "down" | null {
   const w = winner.trim().toLowerCase();
   if (w === "yes" || w === "up") return "up";
   if (w === "no" || w === "down") return "down";
   return null;
 }
 
-export function RecentClosesStrip({
-  outcomes,
-  maxDots = 8,
-}: {
+interface RecentClosesStripProps {
   outcomes: MarketCloseOutcome[];
   maxDots?: number;
-}) {
+  className?: string;
+}
+
+export function RecentClosesStrip({
+  outcomes,
+  maxDots = 5,
+  className,
+}: RecentClosesStripProps) {
   const slice = outcomes.slice(-maxDots);
 
-  if (slice.length === 0) {
-    return (
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span className="font-medium uppercase tracking-wide">Past</span>
-        <span>No closed markets yet</span>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+    <div className={cn("flex items-center gap-2", className)}>
+      <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
         Past
       </span>
-      <div className="flex items-center gap-1.5" aria-label="Last market outcomes">
-        {slice.map((o) => {
-          const dir = directionFromWinner(o.winner);
-          const up = dir === "up";
-          const down = dir === "down";
-          return (
-            <span
-              key={o.market_id}
-              title={`Market #${o.market_id}: ${o.winner}`}
-              className={
-                up
-                  ? "flex size-7 items-center justify-center rounded-full bg-emerald-600 text-white shadow-sm"
-                  : down
-                    ? "flex size-7 items-center justify-center rounded-full bg-red-600 text-white shadow-sm"
-                    : "flex size-7 items-center justify-center rounded-full bg-muted text-muted-foreground"
-              }
-              aria-label={up ? "Up" : down ? "Down" : o.winner}
-            >
-              <span className="text-xs font-bold leading-none">
-                {up ? "▲" : down ? "▼" : "?"}
-              </span>
-            </span>
-          );
-        })}
+      <div
+        className="flex items-center gap-1"
+        aria-label="Recent market outcomes"
+      >
+        {slice.length === 0
+          ? Array.from({ length: 3 }).map((_, i) => (
+              <span
+                key={`placeholder-${i}`}
+                className="size-5 rounded-full bg-muted/60"
+                aria-hidden
+              />
+            ))
+          : slice.map((o) => {
+              const dir = direction(o.winner);
+              return (
+                <span
+                  key={o.market_id}
+                  title={`#${o.market_id}`}
+                  className={cn(
+                    "flex size-5 items-center justify-center rounded-full text-[10px] leading-none text-white",
+                    dir === "up" && "bg-up",
+                    dir === "down" && "bg-down",
+                    !dir && "bg-muted text-muted-foreground",
+                  )}
+                  aria-label={dir ?? o.winner}
+                >
+                  {dir === "up" ? "▲" : dir === "down" ? "▼" : "·"}
+                </span>
+              );
+            })}
       </div>
     </div>
   );

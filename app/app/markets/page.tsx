@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/markets/StatusBadge";
@@ -23,6 +24,8 @@ interface MarketsPageProps {
 }
 
 export default async function MarketsPage({ searchParams }: MarketsPageProps) {
+  if (process.env.NODE_ENV === "production") notFound();
+
   const sp = await searchParams;
   const statusFilter = sp.status && sp.status !== "all" ? sp.status : undefined;
 

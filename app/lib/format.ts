@@ -47,18 +47,39 @@ export function formatDateTime(ts: number | null | undefined): string {
 }
 
 const STRIKE_DECIMALS = 8;
+export const STRIKE_SCALE = Math.pow(10, STRIKE_DECIMALS);
 
 export function formatStrike(value: number | string | null | undefined): string {
   if (value === null || value === undefined) return "—";
   const n = typeof value === "string" ? Number(value) : value;
   if (!Number.isFinite(n)) return String(value);
   // Pyth/oracle quotes are typically scaled. We default to 1e8.
-  const scaled = n / Math.pow(10, STRIKE_DECIMALS);
+  const scaled = n / STRIKE_SCALE;
   if (Math.abs(scaled) < 1) return scaled.toFixed(2);
   return scaled.toLocaleString(undefined, {
     maximumFractionDigits: 2,
     minimumFractionDigits: 2,
   });
+}
+
+/** Format a USD price with grouping + 2dp (no currency code). */
+export function formatPrice(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+/** Signed delta with sign char (no currency, no thousands sep for tiny values). */
+export function formatPriceDelta(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  const abs = Math.abs(value);
+  const formatted = abs.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: abs < 10 ? 2 : 0,
+  });
+  return formatted;
 }
 
 export function formatUsdc(amount: number | string | null | undefined): string {

@@ -43,6 +43,8 @@ const SIG_FIELDS: Array<{
 ];
 
 export default async function MarketDetail({ params }: MarketDetailProps) {
+  if (process.env.NODE_ENV === "production") notFound();
+
   const { id } = await params;
   const marketId = Number(id);
   if (!Number.isFinite(marketId)) notFound();
