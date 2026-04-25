@@ -1,0 +1,86 @@
+import { loadConfig as loadEnv } from "./config";
+import { buildConnections, describeEndpoints } from "./connections";
+import { getLogger } from "./log";
+import { startScheduler } from "./loop";
+import { loadConfig as loadOnchainConfig } from "./state";
+
+async function main(): Promise<void> {
+  const log = getLogger();
+  const cfg = loadEnv();
+
+  log.info(
+    {
+      window_secs: cfg.windowSecs,
+      horizon_secs: cfg.horizonSecs,
+      tick_ms: cfg.tickMs,
+      seed_liquidity: cfg.seedLiquidity.toString(),
+      endpoints: describeEndpoints(cfg),
+    },
+    "kestrel-scheduler: boot",
+  );
+
+  const conns = buildConnections(cfg);
+
+  const onchain = await loadOnchainConfig(conns);
+  if (!onchain) {
+    log.error(
+      "kestrel-scheduler: Config PDA not found on base layer — run init_config first",
+    );
+    process.exit(2);
+  }
+
+  if (!onchain.admin.equals(conns.wallet.publicKey)) {
+    log.error(
+      {
+        wallet: conns.wallet.publicKey.toBase58(),
+        admin: onchain.admin.toBase58(),
+      },
+      "kestrel-scheduler: configured admin keypair is not Config.admin",
+    );
+    process.exit(3);
+  }
+
+  log.info(
+    {
+      admin: onchain.admin.toBase58(),
+      treasury: onchain.treasury.toBase58(),
+      usdc_mint: onchain.usdcMint.toBase58(),
+      market_count: onchain.marketCount,
+      fee_bps: onchain.feeBps,
+    },
+    "kestrel-scheduler: on-chain config",
+  );
+
+  const stop = await startScheduler(conns, cfg, log);
+
+  let shuttingDown = false;
+  const handleSignal = async (sig: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log.info({ sig }, "kestrel-scheduler: shutdown");
+    await stop();
+    process.exit(0);
+  };
+  process.on("SIGINT", handleSignal);
+  process.on("SIGTERM", handleSignal);
+
+  process.on("uncaughtException", (err) => {
+    log.error(
+      { err: String(err?.message || err), stack: (err as any)?.stack },
+      "kestrel-scheduler: uncaughtException",
+    );
+  });
+  process.on("unhandledRejection", (err) => {
+    log.error(
+      { err: String((err as any)?.message || err) },
+      "kestrel-scheduler: unhandledRejection",
+    );
+  });
+}
+
+main().catch((err) => {
+  // Fall back to console because the logger may not have initialized.
+  // eslint-disable-next-line no-console
+  console.error("kestrel-scheduler: fatal", err);
+  process.exit(1);
+});

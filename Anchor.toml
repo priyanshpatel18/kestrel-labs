@@ -27,3 +27,4 @@ test-er = "RUN_ER_TESTS=1 pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 \"tes
 #   solana program close <BUFFER_PUBKEY> -u devnet
 # Extra max-len gives upgradeable program room to grow without resizing buffers.
 deploy-devnet = "anchor deploy --provider.cluster devnet -- --max-len 1048576"
+scheduler-dev = "pnpm --filter @kestrel/scheduler dev"
