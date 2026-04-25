@@ -38,21 +38,24 @@ pub struct InitConfig<'info> {
 pub fn handler(
     ctx: Context<InitConfig>,
     treasury: Pubkey,
+    btc_usd_price_update: Pubkey,
     fee_bps: u16,
 ) -> Result<()> {
     let config = &mut ctx.accounts.config;
     config.admin = ctx.accounts.admin.key();
     config.treasury = treasury;
     config.usdc_mint = ctx.accounts.usdc_mint.key();
+    config.btc_usd_price_update = btc_usd_price_update;
     config.fee_bps = fee_bps;
     config.market_count = 0;
     config.vault_bump = ctx.bumps.vault;
     config.bump = ctx.bumps.config;
     msg!(
-        "Kestrel config initialized: admin={}, treasury={}, mint={}, fee_bps={}",
+        "Kestrel config initialized: admin={}, treasury={}, mint={}, btc_usd_price_update={}, fee_bps={}",
         config.admin,
         config.treasury,
         config.usdc_mint,
+        config.btc_usd_price_update,
         config.fee_bps
     );
     Ok(())

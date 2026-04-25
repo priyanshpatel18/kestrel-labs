@@ -51,6 +51,7 @@ export interface ConfigSnapshot {
   admin: PublicKey;
   treasury: PublicKey;
   usdcMint: PublicKey;
+  btcUsdPriceUpdate: PublicKey;
   feeBps: number;
   marketCount: number;
 }
@@ -114,6 +115,7 @@ export async function loadConfig(
     admin: acc.admin as PublicKey,
     treasury: acc.treasury as PublicKey,
     usdcMint: acc.usdcMint as PublicKey,
+    btcUsdPriceUpdate: acc.btcUsdPriceUpdate as PublicKey,
     feeBps: Number(acc.feeBps),
     marketCount: Number(acc.marketCount),
   };

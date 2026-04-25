@@ -24,6 +24,31 @@ import { finalizeMarket } from "./lifecycle/settle";
 
 type OpKind = "open" | "close" | "settle";
 
+function formatErr(err: any): Record<string, unknown> {
+  const message =
+    typeof err?.message === "string"
+      ? err.message
+      : (() => {
+          try {
+            return JSON.stringify(err);
+          } catch {
+            return String(err);
+          }
+        })();
+
+  const anchorCode =
+    err?.error?.errorCode?.number ??
+    err?.error?.errorCode?.code ??
+    err?.errorCode?.number ??
+    err?.errorCode?.code ??
+    null;
+
+  const logs = Array.isArray(err?.logs) ? err.logs : null;
+  const stack = typeof err?.stack === "string" ? err.stack : null;
+
+  return { message, anchorCode, logs, stack };
+}
+
 interface PerMarketState {
   inFlight: Set<OpKind>;
   lastOpenAttemptMs: number;
@@ -45,6 +70,8 @@ interface SchedulerRuntimeState {
 const FULL_REFRESH_INTERVAL_MS = 5_000;
 const AGENT_DELEGATE_INTERVAL_MS = 30_000;
 const PER_OP_COOLDOWN_MS = 8_000;
+// Small delay helps avoid clock skew between local wall-clock and on-chain Clock sysvar.
+const ONCHAIN_CLOCK_SKEW_BUFFER_SECS = 2;
 
 export async function startScheduler(
   conns: KestrelConnections,
@@ -192,7 +219,7 @@ async function tick(
       if (
         market.status === "pending" &&
         market.isDelegated &&
-        nowSecs >= market.openTs &&
+        nowSecs >= market.openTs + ONCHAIN_CLOCK_SKEW_BUFFER_SECS &&
         !per.inFlight.has("open") &&
         nowMs - per.lastOpenAttemptMs > PER_OP_COOLDOWN_MS
       ) {
@@ -205,7 +232,7 @@ async function tick(
       if (
         (market.status === "open" || market.status === "halted") &&
         market.isDelegated &&
-        nowSecs >= market.closeTs &&
+        nowSecs >= market.closeTs + ONCHAIN_CLOCK_SKEW_BUFFER_SECS &&
         !per.inFlight.has("close") &&
         nowMs - per.lastCloseAttemptMs > PER_OP_COOLDOWN_MS
       ) {
@@ -260,11 +287,10 @@ async function handleOpen(
     mlog.info({ sig }, "open_market");
     await refreshOneMarket(conns, state, market.id);
   } catch (err: any) {
-    const msg = String(err?.message || err);
     if (isRetriableErErr(err)) {
-      mlog.debug({ err: msg }, "open_market: retriable");
+      mlog.debug({ err: formatErr(err) }, "open_market: retriable");
     } else {
-      mlog.warn({ err: msg }, "open_market failed");
+      mlog.warn({ err: formatErr(err) }, "open_market failed");
     }
   } finally {
     per.inFlight.delete("open");
@@ -290,11 +316,10 @@ async function handleClose(
     mlog.info({ sig }, "close_market");
     await refreshOneMarket(conns, state, market.id);
   } catch (err: any) {
-    const msg = String(err?.message || err);
     if (isRetriableErErr(err)) {
-      mlog.debug({ err: msg }, "close_market: retriable");
+      mlog.debug({ err: formatErr(err) }, "close_market: retriable");
     } else {
-      mlog.warn({ err: msg }, "close_market failed");
+      mlog.warn({ err: formatErr(err) }, "close_market failed");
     }
   } finally {
     per.inFlight.delete("close");

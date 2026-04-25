@@ -7,12 +7,14 @@
   "scripts": {
     "dev": "ts-node --transpile-only src/index.ts",
     "start": "ts-node --transpile-only src/index.ts",
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "init-config": "ts-node --transpile-only scripts/init-config.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
     "@magicblock-labs/ephemeral-rollups-sdk": "^0.6.5",
     "@solana/web3.js": "^1.98.4",
+    "@supabase/supabase-js": "^2.49.1",
     "dotenv": "^16.4.5",
     "pino": "^9.5.0",
     "pino-pretty": "^11.3.0"

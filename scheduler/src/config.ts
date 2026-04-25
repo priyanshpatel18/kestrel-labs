@@ -19,6 +19,9 @@ export interface SchedulerConfig {
   tickMs: number;
   seedLiquidity: bigint;
   agentKeypairsDir: string | null;
+  btcUsdPriceUpdate: PublicKey | null;
+  supabaseUrl: string | null;
+  supabaseServiceRoleKey: string | null;
 }
 
 function expandHome(p: string): string {
@@ -74,11 +77,20 @@ export function loadConfig(): SchedulerConfig {
   const programIdEnv = process.env.KESTREL_PROGRAM_ID?.trim();
   const programId = programIdEnv ? new PublicKey(programIdEnv) : null;
 
+  const btcUsdPriceUpdateEnv = process.env.KESTREL_BTC_USD_PRICE_UPDATE?.trim();
+  const btcUsdPriceUpdate = btcUsdPriceUpdateEnv
+    ? new PublicKey(btcUsdPriceUpdateEnv)
+    : null;
+
   const agentKeypairsDirRaw = process.env.KESTREL_AGENT_KEYPAIRS_DIR?.trim();
   const agentKeypairsDir =
     agentKeypairsDirRaw && agentKeypairsDirRaw.length > 0
       ? expandHome(agentKeypairsDirRaw)
       : null;
+
+  const supabaseUrl = process.env.KESTREL_SUPABASE_URL?.trim() || null;
+  const supabaseServiceRoleKey =
+    process.env.KESTREL_SUPABASE_SERVICE_ROLE_KEY?.trim() || null;
 
   return {
     baseRpcUrl,
@@ -93,5 +105,8 @@ export function loadConfig(): SchedulerConfig {
     tickMs: num("KESTREL_TICK_MS", 250),
     seedLiquidity: bigint("KESTREL_SEED_LIQUIDITY", 1_000_000n),
     agentKeypairsDir,
+    btcUsdPriceUpdate,
+    supabaseUrl,
+    supabaseServiceRoleKey,
   };
 }

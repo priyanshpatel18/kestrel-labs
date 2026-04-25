@@ -13,7 +13,7 @@ pub use error::*;
 pub use instructions::*;
 pub use state::*;
 
-declare_id!("5udXAjBRvH7s28hgA4UqJRtKddKgH3ZUnZePyVT98Mdn");
+declare_id!("ELJUMkFGjCAyLu7YWsYN9k8nk3GMtDG1P6BYqBtzVFvd");
 
 #[ephemeral]
 #[program]
@@ -23,9 +23,17 @@ pub mod kestrel {
     pub fn init_config(
         ctx: Context<InitConfig>,
         treasury: Pubkey,
+        btc_usd_price_update: Pubkey,
         fee_bps: u16,
     ) -> Result<()> {
-        instructions::init_config::handler(ctx, treasury, fee_bps)
+        instructions::init_config::handler(ctx, treasury, btc_usd_price_update, fee_bps)
+    }
+
+    pub fn migrate_config(
+        ctx: Context<MigrateConfig>,
+        btc_usd_price_update: Pubkey,
+    ) -> Result<()> {
+        instructions::migrate_config::handler(ctx, btc_usd_price_update)
     }
 
     pub fn register_agent(ctx: Context<RegisterAgent>, policy: AgentPolicy) -> Result<()> {

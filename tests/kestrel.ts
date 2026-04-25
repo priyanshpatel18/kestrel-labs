@@ -34,6 +34,7 @@ const AGENT_SEED = Buffer.from("agent");
 const MARKET_SEED = Buffer.from("market");
 
 const DEFAULT_BTC_FEED = "71wtTRDY8Gxgw56bXFt2oc6qeAbTxzStdNiC425Z51sr";
+const BTC_USD_FEED = process.env.KESTREL_BTC_USD_PRICE_UPDATE || DEFAULT_BTC_FEED;
 const DEVNET_USDC_MINT = new PublicKey(
   "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
 );
@@ -212,7 +213,11 @@ const LOCAL_OWNER_USDC_FUND_SYNTHETIC = 5_000_000n;
 const LOCAL_OWNER_USDC_FUND_EXTERNAL = 2_500_000n;
 
 
-describe("kestrel local", () => {
+const isLocalnet =
+  (process.env.ANCHOR_PROVIDER_URL || "").includes("127.0.0.1") ||
+  (process.env.ANCHOR_PROVIDER_URL || "").includes("localhost");
+
+(isLocalnet ? describe : describe.skip)("kestrel local", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
   const program = anchor.workspace.Kestrel as Program<Kestrel>;
@@ -314,7 +319,7 @@ describe("kestrel local", () => {
   it("initializes config + vault", async () => {
     if (!reusedExistingConfig) {
       await program.methods
-        .initConfig(treasuryPubkey, FEE_BPS)
+        .initConfig(treasuryPubkey, new PublicKey(BTC_USD_FEED), FEE_BPS)
         .accounts({
           admin: wallet.publicKey,
           usdcMint,
@@ -693,6 +698,20 @@ erDescribe("kestrel devnet ER", function () {
     const existing = await baseConnection.getAccountInfo(config);
     if (existing) {
       console.log("Config already exists, skipping init_config.");
+      // If the on-chain config was created with the old layout (pre oracle pubkey),
+      // migrate it in-place so subsequent account fetches decode correctly.
+      const V1_SIZE = 8 + 32 * 3 + 2 + 4 + 1 + 1;
+      if (existing.data.length === V1_SIZE) {
+        console.log("Config appears to be v1; migrating.");
+        const migTx = await program.methods
+          .migrateConfig(new PublicKey(BTC_USD_FEED))
+          .accounts({ admin: wallet.publicKey })
+          .transaction();
+        await sendAndConfirmTransaction(baseConnection, migTx, [wallet.payer], {
+          skipPreflight: true,
+          commitment: "confirmed",
+        });
+      }
       const cfg = await program.account.config.fetch(config);
       treasuryAta = await createAssociatedTokenAccountIdempotent(
         baseConnection,
@@ -704,7 +723,7 @@ erDescribe("kestrel devnet ER", function () {
     }
 
     const tx = await program.methods
-      .initConfig(wallet.publicKey, FEE_BPS)
+      .initConfig(wallet.publicKey, new PublicKey(BTC_USD_FEED), FEE_BPS)
       .accounts({
         admin: wallet.publicKey,
         usdcMint,

@@ -22,6 +22,8 @@ pub struct Market {
     pub close_ts: i64,
     pub status: MarketStatus,
     pub strike: i64,
+    /// Oracle price at close_market time (same scale as strike).
+    pub close_price: i64,
     pub oracle_feed: Pubkey,
     pub yes_reserve: u128,
     pub no_reserve: u128,

@@ -47,6 +47,7 @@ pub fn handler(ctx: Context<CloseMarket>, _id: u32) -> Result<()> {
         Outcome::No
     };
 
+    market.close_price = close_price;
     market.winner = Some(winner);
     market.status = MarketStatus::Closed;
 

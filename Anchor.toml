@@ -6,11 +6,11 @@ package_manager = "pnpm"
 resolution = true
 skip-lint = false
 
-[programs.localnet]
-kestrel = "5udXAjBRvH7s28hgA4UqJRtKddKgH3ZUnZePyVT98Mdn"
-
 [programs.devnet]
-kestrel = "5udXAjBRvH7s28hgA4UqJRtKddKgH3ZUnZePyVT98Mdn"
+kestrel = "ELJUMkFGjCAyLu7YWsYN9k8nk3GMtDG1P6BYqBtzVFvd"
+
+[programs.localnet]
+kestrel = "ELJUMkFGjCAyLu7YWsYN9k8nk3GMtDG1P6BYqBtzVFvd"
 
 [registry]
 url = "https://api.apr.dev"
@@ -20,11 +20,7 @@ cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
-test = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
-test-er = "RUN_ER_TESTS=1 pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
-# If deploy fails with "Buffer account data size ... smaller than the minimum", run:
-#   solana program show --buffers -u devnet
-#   solana program close <BUFFER_PUBKEY> -u devnet
-# Extra max-len gives upgradeable program room to grow without resizing buffers.
 deploy-devnet = "anchor deploy --provider.cluster devnet -- --max-len 1048576"
 scheduler-dev = "pnpm --filter @kestrel/scheduler dev"
+test = "pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
+test-er = "RUN_ER_TESTS=1 pnpm exec ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""

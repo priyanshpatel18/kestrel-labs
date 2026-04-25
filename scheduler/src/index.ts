@@ -2,7 +2,7 @@ import { loadConfig as loadEnv } from "./config";
 import { buildConnections, describeEndpoints } from "./connections";
 import { getLogger } from "./log";
 import { startScheduler } from "./loop";
-import { loadConfig as loadOnchainConfig } from "./state";
+import { configPda, loadConfig as loadOnchainConfig } from "./state";
 
 async function main(): Promise<void> {
   const log = getLogger();
@@ -20,6 +20,46 @@ async function main(): Promise<void> {
   );
 
   const conns = buildConnections(cfg);
+
+  // If the devnet Config PDA was created with an older layout (pre oracle pubkey),
+  // migrate it in-place so the scheduler can decode it and new markets inherit
+  // the correct Pyth PriceUpdate account.
+  const cfgPda = configPda(conns.programId);
+  const info = await conns.baseConnection.getAccountInfo(cfgPda, "confirmed");
+  const V1_SIZE = 8 + 32 * 3 + 2 + 4 + 1 + 1;
+  const V2_SIZE = 8 + 32 * 4 + 2 + 4 + 1 + 1;
+  if (info && info.data.length === V1_SIZE) {
+    if (!cfg.btcUsdPriceUpdate) {
+      log.error(
+        "kestrel-scheduler: Config PDA is v1; set KESTREL_BTC_USD_PRICE_UPDATE to migrate",
+      );
+      process.exit(4);
+    }
+    log.warn(
+      { config: cfgPda.toBase58() },
+      "kestrel-scheduler: migrating v1 config to v2",
+    );
+    try {
+      await (conns.baseProgram.methods as any)
+        .migrateConfig(cfg.btcUsdPriceUpdate)
+        .accounts({ admin: conns.wallet.publicKey })
+        .rpc({ commitment: "confirmed" });
+    } catch (err: any) {
+      log.error(
+        {
+          err: String(err?.message || err),
+          logs: err?.logs,
+        },
+        "kestrel-scheduler: migrate_config failed (is devnet program upgraded?)",
+      );
+      process.exit(5);
+    }
+  } else if (info && info.data.length !== V2_SIZE) {
+    log.warn(
+      { size: info.data.length, config: cfgPda.toBase58() },
+      "kestrel-scheduler: unexpected Config PDA size",
+    );
+  }
 
   const onchain = await loadOnchainConfig(conns);
   if (!onchain) {

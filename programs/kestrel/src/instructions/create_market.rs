@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use crate::constants::{BTC_USD_FEED, CONFIG_SEED, MARKET_SEED};
+use crate::constants::{CONFIG_SEED, MARKET_SEED};
 use crate::error::KestrelError;
 use crate::state::{Config, Market, MarketStatus};
 
@@ -46,7 +46,8 @@ pub fn handler(
     market.close_ts = close_ts;
     market.status = MarketStatus::Pending;
     market.strike = 0;
-    market.oracle_feed = BTC_USD_FEED;
+    market.close_price = 0;
+    market.oracle_feed = ctx.accounts.config.btc_usd_price_update;
     market.yes_reserve = 0;
     market.no_reserve = 0;
     market.k = 0;
