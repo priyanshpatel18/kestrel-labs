@@ -1,0 +1,69 @@
+use anchor_lang::prelude::*;
+
+use crate::constants::{AGENT_SEED, MARKET_SEED};
+use crate::error::KestrelError;
+use crate::state::{AgentProfile, Market, MarketStatus, Outcome};
+
+#[derive(Accounts)]
+#[instruction(id: u32)]
+pub struct SettlePositions<'info> {
+    pub payer: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [MARKET_SEED, &id.to_le_bytes()],
+        bump = market.bump,
+    )]
+    pub market: Account<'info, Market>,
+}
+
+pub fn handler<'info>(
+    ctx: Context<'_, '_, 'info, 'info, SettlePositions<'info>>,
+    _id: u32,
+) -> Result<()> {
+    let market = &ctx.accounts.market;
+    require!(market.status == MarketStatus::Closed, KestrelError::MarketNotSettled);
+    let winner = market.winner.ok_or(KestrelError::MarketNotSettled)?;
+
+    let market_id = market.id;
+    let solvency_budget = (market.seeded_liquidity as u128)
+        .checked_add(market.total_collateral as u128)
+        .ok_or(KestrelError::MathOverflow)?;
+
+    for ai in ctx.remaining_accounts.iter() {
+        require!(ai.is_writable, KestrelError::Unauthorized);
+        require_keys_eq!(*ai.owner, crate::ID, KestrelError::Unauthorized);
+
+        let mut agent: Account<AgentProfile> = Account::try_from(ai)?;
+        let (expected, _) =
+            Pubkey::find_program_address(&[AGENT_SEED, agent.owner.as_ref()], &crate::ID);
+        require_keys_eq!(expected, agent.key(), KestrelError::Unauthorized);
+
+        let slot = match agent.find_position(market_id) {
+            Some(s) => s,
+            None => continue,
+        };
+        let pos = &mut agent.positions[slot];
+        if pos.settled {
+            continue;
+        }
+
+        let payout: u64 = match winner {
+            Outcome::Yes => pos.yes_shares,
+            Outcome::No => pos.no_shares,
+        };
+
+        require!((payout as u128) <= solvency_budget, KestrelError::Insolvent);
+
+        pos.settled = true;
+        agent.balance = agent
+            .balance
+            .checked_add(payout)
+            .ok_or(KestrelError::MathOverflow)?;
+
+        agent.exit(&crate::ID)?;
+    }
+
+    Ok(())
+}
+
