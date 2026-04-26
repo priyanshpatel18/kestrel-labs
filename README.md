@@ -116,11 +116,12 @@ Constants worth citing in client code: `ORACLE_MAX_AGE_SECS`, `MIN_SEED_LIQUIDIT
 
 ### IDL and shared program id
 
-- `anchor build` emits **`target/idl/kestrel.json`**.
-- The **Next.js** app loads a **copy** at **`app/lib/idl/kestrel.json`** (imported from `app/lib/indexer/decode.ts`). After `anchor build`, run **`pnpm sync-idl`** from the repo root and commit the updated JSON so Vercel and CI can build without a Rust toolchain.
-- **Agents** and the **scheduler** still read **`target/idl/kestrel.json`** from the repo root (local dev).
+- `anchor build` writes **`target/idl/kestrel.json`** (still gitignored).
+- Use **`pnpm anchor-build`** from the repo root instead of bare `anchor build`: it runs **`anchor build`** then **`pnpm sync-idl`**, which copies the IDL into **`app/lib/idl/kestrel.json`**, **`scheduler/src/idl/kestrel.json`**, and **`agents/src/idl/kestrel.json`**. All TypeScript packages import those paths only — nothing in app, scheduler, or agents reads `target/idl` at build or runtime.
+- Commit the three JSON copies whenever the program or IDL layout changes. Production hosts only need Node + pnpm (no Anchor) to build and run app, scheduler, or agents.
+- If you ever run plain `anchor build`, run **`pnpm sync-idl`** afterward (or use **`pnpm anchor-build`** next time).
 
-After upgrading the program, run `anchor build`, then **`pnpm sync-idl`**, commit `app/lib/idl/kestrel.json`, and restart any long-lived Node process that bundles the IDL.
+`KESTREL_PROGRAM_ID` in env overrides the program id for clients while keeping the same IDL file.
 
 ### Off-chain components
 
@@ -137,7 +138,7 @@ Env templates: [`app/.env.example`](./app/.env.example), [`agents/.env.example`]
 From repo root (see `[scripts]` in [`Anchor.toml`](./Anchor.toml)):
 
 ```bash
-anchor build
+pnpm anchor-build
 anchor run test      # ts-mocha against tests/**/*.ts
 anchor run test-er   # same with RUN_ER_TESTS=1 for ER-sensitive paths
 ```
@@ -148,8 +149,10 @@ Prerequisites: **Rust**, **Anchor** (see `Anchor.toml` for `anchor_version`), **
 
 ```bash
 pnpm install
-anchor build
+pnpm anchor-build
 ```
+
+(`pnpm anchor-build` forwards extra CLI args to `anchor build`, e.g. `pnpm anchor-build -- --skip-lint`.)
 
 ### Typical live demo (five processes)
 
@@ -181,6 +184,26 @@ cd agents && pnpm dev:all
 ```
 
 **Withdraw (after settle)** — On ER, `commit_and_undelegate_agent` if still delegated; then `withdraw` on base. Use `agents/scripts/withdraw-demo.ts` or build via `POST /api/v1/agent/withdraw` on the app.
+
+### Scheduler in production (Node only, no Anchor)
+
+After **`pnpm anchor-build`** on a dev machine, commit the updated files under **`app/lib/idl/`**, **`scheduler/src/idl/`**, and **`agents/src/idl/`**. On the server you only need **Node + pnpm** and a **`scheduler/.env`**:
+
+```bash
+cd scheduler
+pnpm install --frozen-lockfile
+pnpm run build
+node dist/index.js
+```
+
+With **pm2** (from `scheduler/`):
+
+```bash
+pm2 start dist/index.js --name kestrel-scheduler
+# or: pm2 start ecosystem.config.cjs  with cwd set to this directory
+```
+
+`pnpm start` still works for debugging (`ts-node`); production should prefer **`node dist/index.js`** after `pnpm run build`.
 
 ## License
 

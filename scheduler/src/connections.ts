@@ -6,7 +6,7 @@ import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 
 import type { SchedulerConfig } from "./config";
 
-import idlJson from "../../target/idl/kestrel.json";
+import idlJson from "./idl/kestrel.json";
 
 export interface KestrelConnections {
   baseConnection: Connection;
@@ -41,10 +41,14 @@ export function buildConnections(cfg: SchedulerConfig): KestrelConnections {
   });
   anchor.setProvider(baseProvider);
 
-  const idl = idlJson as Idl;
   const programId = cfg.programId
     ? cfg.programId
-    : new PublicKey((idl as any).address as string);
+    : new PublicKey((idlJson as { address: string }).address);
+
+  const idl = {
+    ...(idlJson as object),
+    address: programId.toBase58(),
+  } as Idl;
 
   const baseProgram = new Program(idl, baseProvider) as Program<Idl>;
   const erProgram = new Program(idl, erProvider) as Program<Idl>;
@@ -81,9 +85,9 @@ export async function getValidatorIdentity(
   return cachedValidatorIdentity;
 }
 
-// Resolve the IDL path so consumers can also load the JSON directly if needed.
+/** Path to the bundled IDL JSON (same folder layout in `src/` and compiled `dist/`). */
 export function idlPath(): string {
-  return path.resolve(__dirname, "..", "..", "target", "idl", "kestrel.json");
+  return path.resolve(__dirname, "idl", "kestrel.json");
 }
 
 export type { Keypair };

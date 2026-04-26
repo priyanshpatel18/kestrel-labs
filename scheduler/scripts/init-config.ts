@@ -1,6 +1,6 @@
 /**
  * One-shot: create Config + vault on base layer for the program in KESTREL_PROGRAM_ID
- * (or the address baked into target/idl/kestrel.json).
+ * (or the address in `scheduler/src/idl/kestrel.json` from `pnpm sync-idl`).
  *
  * Required in scheduler/.env:
  *   KESTREL_BTC_USD_PRICE_UPDATE

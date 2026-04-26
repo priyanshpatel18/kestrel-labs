@@ -45,7 +45,7 @@ const anchor = __importStar(require("@coral-xyz/anchor"));
 const anchor_1 = require("@coral-xyz/anchor");
 const ephemeral_rollups_sdk_1 = require("@magicblock-labs/ephemeral-rollups-sdk");
 const web3_js_1 = require("@solana/web3.js");
-const kestrel_json_1 = __importDefault(require("../../target/idl/kestrel.json"));
+const kestrel_json_1 = __importDefault(require("./idl/kestrel.json"));
 function buildConnections(cfg) {
     const baseConnection = new web3_js_1.Connection(cfg.baseRpcUrl, "confirmed");
     const erConnection = new web3_js_1.Connection(cfg.erRpcUrl, {
@@ -64,10 +64,13 @@ function buildConnections(cfg) {
         commitment: "confirmed",
     });
     anchor.setProvider(baseProvider);
-    const idl = kestrel_json_1.default;
     const programId = cfg.programId
         ? cfg.programId
-        : new web3_js_1.PublicKey(idl.address);
+        : new web3_js_1.PublicKey(kestrel_json_1.default.address);
+    const idl = {
+        ...kestrel_json_1.default,
+        address: programId.toBase58(),
+    };
     const baseProgram = new anchor_1.Program(idl, baseProvider);
     const erProgram = new anchor_1.Program(idl, erProvider);
     return {
@@ -97,7 +100,7 @@ async function getValidatorIdentity(conns) {
     cachedValidatorIdentity = new web3_js_1.PublicKey(v.identity);
     return cachedValidatorIdentity;
 }
-// Resolve the IDL path so consumers can also load the JSON directly if needed.
+/** Path to the bundled IDL JSON (same folder layout in `src/` and compiled `dist/`). */
 function idlPath() {
-    return path.resolve(__dirname, "..", "..", "target", "idl", "kestrel.json");
+    return path.resolve(__dirname, "idl", "kestrel.json");
 }

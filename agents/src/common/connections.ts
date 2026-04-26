@@ -7,7 +7,7 @@ import { ConnectionMagicRouter } from "@magicblock-labs/ephemeral-rollups-sdk";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import * as dotenv from "dotenv";
 
-import idlJson from "../../../target/idl/kestrel.json";
+import idlJson from "../idl/kestrel.json";
 
 dotenv.config({ path: path.resolve(__dirname, "..", "..", ".env") });
 
@@ -75,11 +75,10 @@ export function loadEnv(): AgentEnv {
     .replace(/^https:/, "wss:")
     .replace(/^http:/, "ws:");
 
-  const idl = idlJson as Idl;
   const programIdEnv = process.env.KESTREL_PROGRAM_ID?.trim();
   const programId = programIdEnv
     ? new PublicKey(programIdEnv)
-    : new PublicKey((idl as any).address as string);
+    : new PublicKey((idlJson as { address: string }).address);
 
   const btcUsdPriceUpdate = new PublicKey(
     process.env.KESTREL_BTC_USD_PRICE_UPDATE ||
@@ -164,9 +163,12 @@ export function buildConnections(role: AgentRole): AgentConnections {
   });
   anchor.setProvider(baseProvider);
 
-  const idl = idlJson as Idl;
-  const baseProgram = new Program(idl, baseProvider) as Program<Idl>;
-  const erProgram = new Program(idl, erProvider) as Program<Idl>;
+  const idlForProgram = {
+    ...(idlJson as object),
+    address: env.programId.toBase58(),
+  } as Idl;
+  const baseProgram = new Program(idlForProgram, baseProvider) as Program<Idl>;
+  const erProgram = new Program(idlForProgram, erProvider) as Program<Idl>;
 
   return {
     env,

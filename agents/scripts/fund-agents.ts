@@ -34,7 +34,7 @@ import {
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
 
-import idlJson from "../../target/idl/kestrel.json";
+import idlJson from "../src/idl/kestrel.json";
 import { AgentRole, loadEnv, resolveRoleKeypair } from "../src/common/connections";
 import { buildLogger } from "../src/common/logger";
 import { agentPda } from "../src/common/registry";
@@ -59,10 +59,13 @@ async function fetchConfig(
   connection: Connection,
   programId: PublicKey,
 ): Promise<{ usdcMint: PublicKey } | null> {
-  const idl = idlJson as Idl;
+  const idlForProgram = {
+    ...(idlJson as object),
+    address: programId.toBase58(),
+  } as Idl;
   const wallet = new Wallet(Keypair.generate());
   const provider = new AnchorProvider(connection, wallet, { commitment: "confirmed" });
-  const program = new Program(idl, provider) as Program<Idl>;
+  const program = new Program(idlForProgram, provider) as Program<Idl>;
   const [configPda] = PublicKey.findProgramAddressSync(
     [Buffer.from("config")],
     programId,

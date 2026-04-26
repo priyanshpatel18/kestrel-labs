@@ -7,7 +7,6 @@
   "scripts": {
     "dev": "ts-node --transpile-only src/index.ts",
     "start": "ts-node --transpile-only src/index.ts",
-    "prebuild": "node ../scripts/ensure-idl.mjs",
     "build": "tsc -p tsconfig.json",
     "init-config": "ts-node --transpile-only scripts/init-config.ts"
   },
