@@ -6,7 +6,7 @@ import { StatusBadge } from "@/components/markets/StatusBadge";
 import { fetchAllMarkets } from "@/lib/db/queries";
 import { showDevNav } from "@/lib/showDevNav";
 import {
-  formatDateTime,
+  formatDateTimeWithUtc,
   formatStrike,
   shortPubkey,
 } from "@/lib/format";
@@ -112,11 +112,11 @@ export default async function MarketsPage({ searchParams }: MarketsPageProps) {
                       <Td>
                         <StatusBadge status={m.status} />
                       </Td>
-                      <Td className="font-mono text-xs">
-                        {formatDateTime(m.open_ts)}
+                      <Td className="max-w-[14rem] whitespace-normal break-words font-mono text-xs">
+                        {formatDateTimeWithUtc(m.open_ts)}
                       </Td>
-                      <Td className="font-mono text-xs">
-                        {formatDateTime(m.close_ts)}
+                      <Td className="max-w-[14rem] whitespace-normal break-words font-mono text-xs">
+                        {formatDateTimeWithUtc(m.close_ts)}
                       </Td>
                       <Td className="font-mono text-xs">
                         {formatStrike(m.strike_price)}

@@ -18,6 +18,14 @@ export interface SchedulerConfig {
   horizonSecs: number;
   tickMs: number;
   seedLiquidity: bigint;
+  /** Seconds after open_ts / close_ts before ER open_market / close_market (0 = wall-aligned; chain may still retriable-retry). */
+  onchainWindowBufferSecs: number;
+  /** How often to refetch the full market list from base (lower = snappier window edges). */
+  marketListRefreshMs: number;
+  /** Min ms between ER open_market / close_market attempts per market. */
+  openCloseCooldownMs: number;
+  /** Min ms between settle+commit passes per market. */
+  settleCooldownMs: number;
   agentKeypairsDir: string | null;
   btcUsdPriceUpdate: PublicKey | null;
   supabaseUrl: string | null;
@@ -46,6 +54,10 @@ function num(envName: string, fallback: number): number {
     throw new Error(`${envName} must be a number, got ${v}`);
   }
   return n;
+}
+
+function clampInt(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, Math.floor(n)));
 }
 
 function bigint(envName: string, fallback: bigint): bigint {
@@ -102,8 +114,28 @@ export function loadConfig(): SchedulerConfig {
     programId,
     windowSecs: num("KESTREL_WINDOW_SECS", 300),
     horizonSecs: num("KESTREL_HORIZON_SECS", 86_400),
-    tickMs: num("KESTREL_TICK_MS", 250),
+    tickMs: clampInt(num("KESTREL_TICK_MS", 100), 50, 60_000),
     seedLiquidity: bigint("KESTREL_SEED_LIQUIDITY", 1_000_000n),
+    onchainWindowBufferSecs: clampInt(
+      num("KESTREL_ONCHAIN_WINDOW_BUFFER_SECS", 0),
+      0,
+      10,
+    ),
+    marketListRefreshMs: clampInt(
+      num("KESTREL_MARKET_LIST_REFRESH_MS", 400),
+      200,
+      60_000,
+    ),
+    openCloseCooldownMs: clampInt(
+      num("KESTREL_OPEN_CLOSE_COOLDOWN_MS", 350),
+      150,
+      60_000,
+    ),
+    settleCooldownMs: clampInt(
+      num("KESTREL_SETTLE_COOLDOWN_MS", 8000),
+      500,
+      120_000,
+    ),
     agentKeypairsDir,
     btcUsdPriceUpdate,
     supabaseUrl,

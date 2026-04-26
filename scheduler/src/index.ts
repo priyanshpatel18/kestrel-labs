@@ -14,6 +14,10 @@ async function main(): Promise<void> {
       horizon_secs: cfg.horizonSecs,
       tick_ms: cfg.tickMs,
       seed_liquidity: cfg.seedLiquidity.toString(),
+      window_buffer_secs: cfg.onchainWindowBufferSecs,
+      market_list_refresh_ms: cfg.marketListRefreshMs,
+      open_close_cooldown_ms: cfg.openCloseCooldownMs,
+      settle_cooldown_ms: cfg.settleCooldownMs,
     },
     "kestrel-scheduler: boot",
   );

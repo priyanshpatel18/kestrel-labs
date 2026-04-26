@@ -46,6 +46,20 @@ export function formatDateTime(ts: number | null | undefined): string {
   });
 }
 
+export function formatDateTimeWithUtc(ts: number | null | undefined): string {
+  if (!ts) return "—";
+  const d = new Date(ts * 1000);
+  const local = d.toLocaleString(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const utc = `${d.toISOString().slice(0, 10)} ${d.toISOString().slice(11, 16)} UTC`;
+  return `${local} (${utc})`;
+}
+
 const STRIKE_DECIMALS = 8;
 export const STRIKE_SCALE = Math.pow(10, STRIKE_DECIMALS);
 

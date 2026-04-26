@@ -10,7 +10,7 @@ import {
 } from "@/lib/db/queries";
 import {
   explorerTxUrl,
-  formatDateTime,
+  formatDateTimeWithUtc,
   formatStrike,
   shortPubkey,
 } from "@/lib/format";
@@ -118,8 +118,8 @@ export default async function MarketDetail({ params }: MarketDetailProps) {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
-            <Stat label="Open" value={formatDateTime(market.open_ts)} />
-            <Stat label="Close" value={formatDateTime(market.close_ts)} />
+            <Stat label="Open" value={formatDateTimeWithUtc(market.open_ts)} />
+            <Stat label="Close" value={formatDateTimeWithUtc(market.close_ts)} />
             <Stat label="Strike" value={formatStrike(strikeValue)} />
             <Stat label="Final" value={formatStrike(closeValue)} />
             <Stat label="Winner" value={outcomeLabel ?? "—"} />

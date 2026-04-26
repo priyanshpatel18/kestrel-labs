@@ -67,13 +67,9 @@ interface SchedulerRuntimeState {
   ticking: boolean;
 }
 
-const FULL_REFRESH_INTERVAL_MS = 5_000;
 const AGENT_DELEGATE_INTERVAL_MS = 30_000;
-const PER_OP_COOLDOWN_MS = 8_000;
 /** Max create+delegate pairs per tick so one slow tick cannot starve ER work forever. */
 const MAX_HORIZON_CREATE_DELEGATE_PER_TICK = 8;
-// Small delay helps avoid clock skew between local wall-clock and on-chain Clock sysvar.
-const ONCHAIN_CLOCK_SKEW_BUFFER_SECS = 2;
 
 export async function startScheduler(
   conns: KestrelConnections,
@@ -86,6 +82,10 @@ export async function startScheduler(
       horizon_secs: cfg.horizonSecs,
       tick_ms: cfg.tickMs,
       seed_liquidity: cfg.seedLiquidity.toString(),
+      window_buffer_secs: cfg.onchainWindowBufferSecs,
+      market_list_refresh_ms: cfg.marketListRefreshMs,
+      open_close_cooldown_ms: cfg.openCloseCooldownMs,
+      settle_cooldown_ms: cfg.settleCooldownMs,
     },
     "scheduler: starting",
   );
@@ -184,7 +184,7 @@ async function tick(
     const nowMs = Date.now();
     const nowSecs = Math.floor(nowMs / 1000);
 
-    if (nowMs - state.lastFullRefreshMs > FULL_REFRESH_INTERVAL_MS) {
+    if (nowMs - state.lastFullRefreshMs > cfg.marketListRefreshMs) {
       await refreshMarkets(conns, state, log).catch((err) => {
         log.warn(
           { err: String(err?.message || err) },
@@ -202,9 +202,9 @@ async function tick(
       if (
         market.status === "pending" &&
         market.isDelegated &&
-        nowSecs >= market.openTs + ONCHAIN_CLOCK_SKEW_BUFFER_SECS &&
+        nowSecs >= market.openTs + cfg.onchainWindowBufferSecs &&
         !per.inFlight.has("open") &&
-        nowMs - per.lastOpenAttemptMs > PER_OP_COOLDOWN_MS
+        nowMs - per.lastOpenAttemptMs > cfg.openCloseCooldownMs
       ) {
         per.inFlight.add("open");
         per.lastOpenAttemptMs = nowMs;
@@ -215,9 +215,9 @@ async function tick(
       if (
         (market.status === "open" || market.status === "halted") &&
         market.isDelegated &&
-        nowSecs >= market.closeTs + ONCHAIN_CLOCK_SKEW_BUFFER_SECS &&
+        nowSecs >= market.closeTs + cfg.onchainWindowBufferSecs &&
         !per.inFlight.has("close") &&
-        nowMs - per.lastCloseAttemptMs > PER_OP_COOLDOWN_MS
+        nowMs - per.lastCloseAttemptMs > cfg.openCloseCooldownMs
       ) {
         per.inFlight.add("close");
         per.lastCloseAttemptMs = nowMs;
@@ -248,7 +248,7 @@ async function tick(
         market.status === "closed" &&
         market.isDelegated &&
         !per.inFlight.has("settle") &&
-        nowMs - per.lastSettleAttemptMs > PER_OP_COOLDOWN_MS
+        nowMs - per.lastSettleAttemptMs > cfg.settleCooldownMs
       ) {
         per.inFlight.add("settle");
         per.lastSettleAttemptMs = nowMs;
