@@ -1,5 +1,10 @@
 import { Badge } from "@/components/ui/badge";
-import { explorerTxUrl, formatTimeIso, shortPubkey } from "@/lib/format";
+import {
+  explorerTxUrl,
+  formatTimeIso,
+  formatUsdc,
+  shortPubkey,
+} from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { EventRow } from "@/lib/types";
 
@@ -105,8 +110,18 @@ function summary(ev: EventRow): string {
       return `id=${a.market_id ?? "?"} winner=${a.winner ?? "?"}`;
     case "AgentSettled":
       return `payout=${a.payout ?? "—"} side=${a.side_won ?? "?"}`;
-    case "Withdrawn":
-      return `gross=${a.amount_gross ?? "—"} net=${a.amount_net ?? "—"}`;
+    case "Withdrawn": {
+      const gross = formatUsdc(a.amount_gross ?? null);
+      const net = formatUsdc(a.amount_net ?? null);
+      const feeRaw = a.fee ?? a.amount_fee;
+      const fee =
+        feeRaw !== undefined && feeRaw !== null && feeRaw !== ""
+          ? formatUsdc(feeRaw)
+          : null;
+      return fee
+        ? `gross ${gross} → net ${net} (protocol fee ${fee})`
+        : `gross ${gross} → net ${net}`;
+    }
     case "PolicyUpdated":
       return "policy diff";
     default:

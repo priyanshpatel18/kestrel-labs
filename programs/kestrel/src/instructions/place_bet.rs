@@ -45,6 +45,9 @@ pub fn handler(ctx: Context<PlaceBet>, _id: u32, side: Outcome, amount: u64) -> 
     let market = &mut ctx.accounts.market;
     let agent = &mut ctx.accounts.agent;
 
+    if market.status == MarketStatus::Halted {
+        return err!(KestrelError::MarketHalted);
+    }
     require!(market.status == MarketStatus::Open, KestrelError::MarketNotOpen);
     require!(!agent.is_paused(), KestrelError::AgentPaused);
     if agent.policy.allowed_markets_root != [0u8; 32] {

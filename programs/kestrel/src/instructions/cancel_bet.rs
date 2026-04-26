@@ -129,7 +129,10 @@ pub fn handler(ctx: Context<CancelBet>, _id: u32) -> Result<()> {
     let market = &mut ctx.accounts.market;
     let agent = &mut ctx.accounts.agent;
 
-    require!(market.status == MarketStatus::Open, KestrelError::MarketNotOpen);
+    require!(
+        market.status == MarketStatus::Open || market.status == MarketStatus::Halted,
+        KestrelError::MarketNotOpen
+    );
     let now = Clock::get()?.unix_timestamp;
     require!(now < market.close_ts, KestrelError::OutsideMarketWindow);
 

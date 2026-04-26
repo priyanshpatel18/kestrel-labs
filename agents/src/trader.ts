@@ -12,21 +12,27 @@
  *          rotate the policy back. Fires two PolicyUpdated cards plus a blocked card.
  */
 import { BN } from "@coral-xyz/anchor";
-import { PublicKey } from "@solana/web3.js";
 
 import { AgentConnections, buildConnections } from "./common/connections";
 import { buildLogger } from "./common/logger";
 import {
-  MarketView,
-  findActiveOpenMarket,
-} from "./common/markets";
+  flattenPositionsOutsideCurrentMarket,
+  tryCancelBetOnMarket,
+} from "./common/flattenPositions";
+import { DELEGATION_PROGRAM_ID, MarketView, findActiveOpenMarket } from "./common/markets";
 import { readOracleSnapshot } from "./common/oracle";
 import {
   defaultPolicyFor,
   wrongAllowlistRoot,
 } from "./common/policy";
+import { formatErrorForLog } from "./common/formatError";
 import { getKestrelApiBaseUrl, placeBetViaApi } from "./common/kestrelApi";
-import { ensureAgent, ensureErTradingReady, tagAgentRole } from "./common/registry";
+import {
+  agentPda,
+  ensureAgent,
+  ensureErTradingReady,
+  tagAgentRole,
+} from "./common/registry";
 import { extractCustomErrorCode, sendErTx } from "./common/tx";
 
 const log = buildLogger("trader");
@@ -43,6 +49,8 @@ interface MarketActions {
   honestPlaced: boolean;
   overCapAttempted: boolean;
   wrongAllowlistAttempted: boolean;
+  /** After scripted demos, cancel once on this market before close to free the slot. */
+  flattenedAfterDemo: boolean;
 }
 
 const memos = new Map<number, MarketActions>();
@@ -95,7 +103,7 @@ async function placeBet(params: {
         amount: amount.toString(),
         intentional: expectFailure ?? null,
         code,
-        err: String(err?.message || err).slice(0, 220),
+        err: formatErrorForLog(err).slice(0, 800),
       },
       expectFailure ? "place_bet blocked (expected)" : "place_bet failed",
     );
@@ -149,9 +157,12 @@ async function tick(conns: AgentConnections): Promise<void> {
       honestPlaced: false,
       overCapAttempted: false,
       wrongAllowlistAttempted: false,
+      flattenedAfterDemo: false,
     };
     memos.set(market.id, memo);
   }
+
+  await flattenPositionsOutsideCurrentMarket(conns, market, nowSec, log);
 
   const elapsed = nowSec - market.openTs;
   // Refresh policy once so the over-cap demo uses the on-chain max+1.
@@ -214,19 +225,48 @@ async function tick(conns: AgentConnections): Promise<void> {
       );
     }
   }
+
+  // Flatten this window once demos are done so the slot is free before
+  // close_ts (cancel_bet is not allowed after the market leaves Open/Halted).
+  if (
+    memo.honestPlaced &&
+    memo.overCapAttempted &&
+    memo.wrongAllowlistAttempted &&
+    !memo.flattenedAfterDemo
+  ) {
+    const secsToClose = market.closeTs - nowSec;
+    if (secsToClose > 15 && secsToClose <= 180) {
+      memo.flattenedAfterDemo = true;
+      await tryCancelBetOnMarket(conns, market.id, log);
+    }
+  }
+}
+
+async function maybeRaiseOpenPositionsCap(conns: AgentConnections): Promise<void> {
+  const tpl = defaultPolicyFor("trader");
+  const pda = agentPda(conns.signerKeypair.publicKey, conns.programId);
+  const baseInfo = await conns.baseConnection.getAccountInfo(pda, "confirmed");
+  const program =
+    baseInfo?.owner.equals(DELEGATION_PROGRAM_ID) || !baseInfo
+      ? conns.erProgram
+      : conns.baseProgram;
+  let cap: number;
+  try {
+    const acc = await (program as any).account.agentProfile.fetch(pda);
+    cap = Number(acc.policy.maxOpenPositions);
+  } catch {
+    return;
+  }
+  if (cap >= tpl.maxOpenPositions) return;
+  await updatePolicy(conns, tpl, "boot: raise max_open_positions");
 }
 
 async function readOnchainMaxStake(conns: AgentConnections): Promise<BN | null> {
   const owner = conns.signerKeypair.publicKey;
-  const pda = PublicKey.findProgramAddressSync(
-    [Buffer.from("agent"), owner.toBuffer()],
-    conns.programId,
-  )[0];
+  const pda = agentPda(owner, conns.programId);
   const baseInfo = await conns.baseConnection.getAccountInfo(pda, "confirmed");
   if (!baseInfo) return null;
-  const program = baseInfo.owner.equals(
-    new PublicKey("DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"),
-  )
+  const program = baseInfo.owner.equals(DELEGATION_PROGRAM_ID)
     ? conns.erProgram
     : conns.baseProgram;
   try {
@@ -250,19 +290,20 @@ async function main(): Promise<void> {
     "trader boot",
   );
 
+  const { agentPda: pda } = await ensureAgent({ conns, role: "trader", log });
+  await tagAgentRole({ conns, role: "trader", agentPda: pda, log });
+  await ensureErTradingReady({
+    conns,
+    role: "trader",
+    log,
+    targetBalance: new BN(TARGET_BALANCE),
+  });
   try {
-    const { agentPda: pda } = await ensureAgent({ conns, role: "trader", log });
-    await tagAgentRole({ conns, role: "trader", agentPda: pda, log });
-    await ensureErTradingReady({
-      conns,
-      role: "trader",
-      log,
-      targetBalance: new BN(TARGET_BALANCE),
-    });
-  } catch (err: any) {
+    await maybeRaiseOpenPositionsCap(conns);
+  } catch (err: unknown) {
     log.warn(
-      { err: String(err?.message || err) },
-      "trader: ensureAgent failed (continuing — may be already delegated)",
+      { err: formatErrorForLog(err) },
+      "trader: maybeRaiseOpenPositionsCap failed (continuing)",
     );
   }
 
@@ -277,6 +318,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  log.fatal({ err: String(err?.message || err) }, "trader crashed");
+  log.fatal({ err: formatErrorForLog(err) }, "trader crashed");
   process.exit(1);
 });

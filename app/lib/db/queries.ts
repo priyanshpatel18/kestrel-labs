@@ -1,11 +1,13 @@
 import "server-only";
 
 import { getReadSupabase } from "../supabase/server";
-import type {
-  AgentRow,
-  EventRow,
-  MarketCloseOutcome,
-  MarketRow,
+import {
+  MARKET_STATUS,
+  type AgentRow,
+  type EventRow,
+  type MarketCloseOutcome,
+  type MarketRow,
+  type MarketStatus,
 } from "../types";
 
 export async function fetchAllMarkets(opts?: {
@@ -149,5 +151,85 @@ export async function fetchDashboardSnapshot(): Promise<DashboardSnapshot> {
     nowMarket: (now.data ?? null) as MarketRow | null,
     recentCloseOutcomes,
     totalMarkets: totalMarkets ?? 0,
+  };
+}
+
+/** Read-only aggregates for the public `/stats` page (prod-safe). */
+export interface PublicStats {
+  totalMarkets: number;
+  marketsByStatus: Partial<Record<MarketStatus, number>>;
+  totalEvents: number;
+  eventsLast24h: number;
+  totalAgents: number;
+  activeMarketId: number | null;
+  activeMarketStatus: string | null;
+  lastEventAt: string | null;
+}
+
+export async function fetchPublicStats(): Promise<PublicStats> {
+  const sb = getReadSupabase();
+  const nowSec = Math.floor(Date.now() / 1000);
+  const sinceIso = new Date(Date.now() - 86_400_000).toISOString();
+
+  const statusTuples = await Promise.all(
+    MARKET_STATUS.map(async (status) => {
+      const { count, error } = await sb
+        .from("markets")
+        .select("market_id", { count: "exact", head: true })
+        .eq("status", status);
+      if (error) throw error;
+      return [status, count ?? 0] as const;
+    }),
+  );
+
+  const [
+    { count: totalMarkets },
+    { count: totalEvents },
+    { count: eventsLast24h },
+    { count: totalAgents },
+    now,
+    recent,
+  ] = await Promise.all([
+    sb.from("markets").select("market_id", { count: "exact", head: true }),
+    sb.from("events").select("id", { count: "exact", head: true }),
+    sb
+      .from("events")
+      .select("id", { count: "exact", head: true })
+      .gte("inserted_at", sinceIso),
+    sb.from("agents").select("owner_pubkey", { count: "exact", head: true }),
+    sb
+      .from("markets")
+      .select("market_id,status")
+      .lte("open_ts", nowSec)
+      .gte("close_ts", nowSec)
+      .order("market_id", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    sb
+      .from("events")
+      .select("inserted_at")
+      .order("inserted_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  const marketsByStatus = Object.fromEntries(statusTuples) as Partial<
+    Record<MarketStatus, number>
+  >;
+
+  const nowRow = (now.data ?? null) as Pick<
+    MarketRow,
+    "market_id" | "status"
+  > | null;
+
+  return {
+    totalMarkets: totalMarkets ?? 0,
+    marketsByStatus,
+    totalEvents: totalEvents ?? 0,
+    eventsLast24h: eventsLast24h ?? 0,
+    totalAgents: totalAgents ?? 0,
+    activeMarketId: nowRow?.market_id ?? null,
+    activeMarketStatus: nowRow?.status ?? null,
+    lastEventAt: (recent.data as { inserted_at?: string } | null)?.inserted_at ?? null,
   };
 }

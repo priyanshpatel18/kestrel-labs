@@ -21,12 +21,21 @@ import {
   findActiveOpenMarket,
 } from "./common/markets";
 import { readOracleSnapshot } from "./common/oracle";
+import { formatErrorForLog } from "./common/formatError";
+import { flattenPositionsOutsideCurrentMarket } from "./common/flattenPositions";
 import {
   cancelBetViaApi,
   getKestrelApiBaseUrl,
   placeBetViaApi,
 } from "./common/kestrelApi";
-import { ensureAgent, ensureErTradingReady, tagAgentRole } from "./common/registry";
+import { DELEGATION_PROGRAM_ID } from "./common/markets";
+import { defaultPolicyFor } from "./common/policy";
+import {
+  agentPda,
+  ensureAgent,
+  ensureErTradingReady,
+  tagAgentRole,
+} from "./common/registry";
 import { extractCustomErrorCode, sendErTx } from "./common/tx";
 
 const log = buildLogger("risk_lp");
@@ -62,37 +71,74 @@ function decideUnderboughtSide(market: MarketView): "yes" | "no" | null {
   return y > n ? "yes" : "no";
 }
 
+async function submitHedgeTx(
+  conns: AgentConnections,
+  market: MarketView,
+  side: "yes" | "no",
+): Promise<string> {
+  const apiBase = getKestrelApiBaseUrl(conns);
+  if (apiBase) {
+    return placeBetViaApi({
+      conns,
+      marketId: market.id,
+      side,
+      amount: new BN(HEDGE_SIZE),
+    });
+  }
+  const sideArg = side === "yes" ? { yes: {} } : { no: {} };
+  const tx = await (conns.erProgram.methods as any)
+    .placeBet(market.id, sideArg, new BN(HEDGE_SIZE))
+    .accounts({
+      owner: conns.signerKeypair.publicKey,
+      priceUpdate: market.oracleFeed,
+    })
+    .transaction();
+  return sendErTx(conns, tx, [conns.signerKeypair]);
+}
+
 async function placeHedge(
   conns: AgentConnections,
   market: MarketView,
   side: "yes" | "no",
 ): Promise<string | null> {
-  const apiBase = getKestrelApiBaseUrl(conns);
   try {
-    const sig = apiBase
-      ? await placeBetViaApi({
-          conns,
-          marketId: market.id,
-          side,
-          amount: new BN(HEDGE_SIZE),
-        })
-      : await (async () => {
-          const sideArg = side === "yes" ? { yes: {} } : { no: {} };
-          const tx = await (conns.erProgram.methods as any)
-            .placeBet(market.id, sideArg, new BN(HEDGE_SIZE))
-            .accounts({
-              owner: conns.signerKeypair.publicKey,
-              priceUpdate: market.oracleFeed,
-            })
-            .transaction();
-          return sendErTx(conns, tx, [conns.signerKeypair]);
-        })();
+    const sig = await submitHedgeTx(conns, market, side);
     log.info({ market: market.id, side, amount: HEDGE_SIZE, sig }, "hedge place_bet");
     return sig;
-  } catch (err: any) {
+  } catch (err: unknown) {
     const code = extractCustomErrorCode(err);
+    if (code === 6012) {
+      const nowSec = Math.floor(Date.now() / 1000);
+      await flattenPositionsOutsideCurrentMarket(conns, market, nowSec, log);
+      try {
+        const sig2 = await submitHedgeTx(conns, market, side);
+        log.info(
+          { market: market.id, side, amount: HEDGE_SIZE, sig: sig2 },
+          "hedge place_bet (after slot flush)",
+        );
+        return sig2;
+      } catch (err2: unknown) {
+        log.warn(
+          {
+            market: market.id,
+            side,
+            amount: HEDGE_SIZE,
+            code: extractCustomErrorCode(err2),
+            err: formatErrorForLog(err2).slice(0, 800),
+          },
+          "hedge place_bet failed after slot flush",
+        );
+        return null;
+      }
+    }
     log.warn(
-      { market: market.id, side, amount: HEDGE_SIZE, code, err: String(err?.message || err).slice(0, 200) },
+      {
+        market: market.id,
+        side,
+        amount: HEDGE_SIZE,
+        code,
+        err: formatErrorForLog(err).slice(0, 800),
+      },
       "hedge place_bet failed",
     );
     return null;
@@ -129,9 +175,41 @@ async function cancelMarket(
   }
 }
 
+async function maybeRaiseRiskLpOpenPositionsCap(conns: AgentConnections): Promise<void> {
+  const tpl = defaultPolicyFor("risk_lp");
+  const pda = agentPda(conns.signerKeypair.publicKey, conns.programId);
+  const baseInfo = await conns.baseConnection.getAccountInfo(pda, "confirmed");
+  const program =
+    baseInfo?.owner.equals(DELEGATION_PROGRAM_ID) || !baseInfo
+      ? conns.erProgram
+      : conns.baseProgram;
+  let cap: number;
+  try {
+    const acc = await (program as any).account.agentProfile.fetch(pda);
+    cap = Number(acc.policy.maxOpenPositions);
+  } catch {
+    return;
+  }
+  if (cap >= tpl.maxOpenPositions) return;
+  const tx = await (conns.erProgram.methods as any)
+    .updatePolicy({
+      maxStakePerWindow: tpl.maxStakePerWindow,
+      maxOpenPositions: tpl.maxOpenPositions,
+      allowedMarketsRoot: tpl.allowedMarketsRoot,
+      paused: tpl.paused,
+    })
+    .accounts({ owner: conns.signerKeypair.publicKey })
+    .transaction();
+  const sig = await sendErTx(conns, tx, [conns.signerKeypair]);
+  log.info({ reason: "boot: raise max_open_positions (risk_lp)", sig }, "update_policy");
+}
+
 async function tick(conns: AgentConnections): Promise<void> {
   const market = await findActiveOpenMarket(conns, log);
   if (!market) return;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  await flattenPositionsOutsideCurrentMarket(conns, market, nowSec, log);
 
   const memo = memos.get(market.id) ?? {
     hedgesPlaced: 0,
@@ -139,7 +217,6 @@ async function tick(conns: AgentConnections): Promise<void> {
   };
   memos.set(market.id, memo);
 
-  const nowSec = Math.floor(Date.now() / 1000);
   const secsToClose = market.closeTs - nowSec;
 
   // Cancel-on-staleness / near-close. Once per market.
@@ -188,19 +265,20 @@ async function main(): Promise<void> {
     "risk_lp boot",
   );
 
+  const { agentPda: pda } = await ensureAgent({ conns, role: "risk_lp", log });
+  await tagAgentRole({ conns, role: "risk_lp", agentPda: pda, log });
+  await ensureErTradingReady({
+    conns,
+    role: "risk_lp",
+    log,
+    targetBalance: new BN(TARGET_BALANCE),
+  });
   try {
-    const { agentPda: pda } = await ensureAgent({ conns, role: "risk_lp", log });
-    await tagAgentRole({ conns, role: "risk_lp", agentPda: pda, log });
-    await ensureErTradingReady({
-      conns,
-      role: "risk_lp",
-      log,
-      targetBalance: new BN(TARGET_BALANCE),
-    });
-  } catch (err: any) {
+    await maybeRaiseRiskLpOpenPositionsCap(conns);
+  } catch (err: unknown) {
     log.warn(
-      { err: String(err?.message || err) },
-      "risk_lp: ensureAgent failed (continuing)",
+      { err: formatErrorForLog(err) },
+      "risk_lp: maybeRaiseRiskLpOpenPositionsCap failed (continuing)",
     );
   }
 
@@ -215,6 +293,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  log.fatal({ err: String(err?.message || err) }, "risk_lp crashed");
+  log.fatal({ err: formatErrorForLog(err) }, "risk_lp crashed");
   process.exit(1);
 });

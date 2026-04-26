@@ -81,6 +81,30 @@ export async function placeBetViaApi(params: {
   );
 }
 
+export async function closePositionViaApi(params: {
+  conns: AgentConnections;
+  marketId: number;
+  side: "yes" | "no";
+  shares: BN;
+}): Promise<string> {
+  const base = getKestrelApiBaseUrl(params.conns);
+  if (!base) throw new Error("closePositionViaApi: KESTREL_API_BASE_URL not set");
+
+  const pubkey = params.conns.signerKeypair.publicKey.toBase58();
+  const json = await postJson<ApiTxResponse>(base, "/api/v1/bet/close", {
+    pubkey,
+    marketId: params.marketId,
+    side: params.side,
+    shares: Number(params.shares.toString()),
+  });
+  const tx = decodeTxB64(json.transaction);
+  return sendRefreshedTx(
+    params.conns.erConnection,
+    tx,
+    [params.conns.signerKeypair],
+  );
+}
+
 export async function cancelBetViaApi(params: {
   conns: AgentConnections;
   marketId: number;

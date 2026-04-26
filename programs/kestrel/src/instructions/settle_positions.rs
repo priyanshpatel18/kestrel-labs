@@ -3,7 +3,7 @@ use anchor_lang::prelude::*;
 use crate::constants::{AGENT_SEED, MARKET_SEED};
 use crate::error::KestrelError;
 use crate::events::AgentSettled;
-use crate::state::{AgentProfile, Market, MarketStatus, Outcome};
+use crate::state::{AgentProfile, Market, MarketStatus, OpenPosition, Outcome};
 
 #[derive(Accounts)]
 #[instruction(id: u32)]
@@ -46,23 +46,24 @@ pub fn handler<'info>(
             Some(s) => s,
             None => continue,
         };
-        let pos = &mut agent.positions[pos_slot];
-        if pos.settled {
+        if agent.positions[pos_slot].settled {
             continue;
         }
 
         let payout: u64 = match winner {
-            Outcome::Yes => pos.yes_shares,
-            Outcome::No => pos.no_shares,
+            Outcome::Yes => agent.positions[pos_slot].yes_shares,
+            Outcome::No => agent.positions[pos_slot].no_shares,
         };
 
         require!((payout as u128) <= solvency_budget, KestrelError::Insolvent);
 
-        pos.settled = true;
         agent.balance = agent
             .balance
             .checked_add(payout)
             .ok_or(KestrelError::MathOverflow)?;
+
+        // Free the slot for later markets.
+        agent.positions[pos_slot] = OpenPosition::default();
 
         let owner = agent.owner;
 

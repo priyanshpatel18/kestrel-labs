@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { fetchAllAgents } from "@/lib/db/queries";
 import { formatUsdc, relativeTime, shortPubkey } from "@/lib/format";
+import { showDevNav } from "@/lib/showDevNav";
 import type { AgentRole, AgentRow } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +49,7 @@ function policyMaxPositions(p: AgentRow["current_policy"]): number | null {
 }
 
 export default async function AgentsPage() {
-  if (process.env.NODE_ENV === "production") notFound();
+  if (!showDevNav()) notFound();
 
   let agents: AgentRow[] = [];
   try {
@@ -63,10 +64,6 @@ export default async function AgentsPage() {
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">Agents</h1>
-        <p className="text-sm text-muted-foreground">
-          Bounded-autonomy runtimes the indexer has seen this session. Click
-          any agent to follow its decision trace.
-        </p>
       </div>
 
       {agents.length === 0 ? (

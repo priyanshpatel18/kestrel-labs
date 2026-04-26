@@ -7,6 +7,7 @@ import {
   fetchAgentEvents,
   fetchAgentRow,
 } from "@/lib/db/queries";
+import { showDevNav } from "@/lib/showDevNav";
 import {
   explorerAddressUrl,
   formatUsdc,
@@ -67,7 +68,7 @@ function policyAllowlistHex(p: PolicyShape): string | null {
 }
 
 export default async function AgentDetailPage({ params }: PageProps) {
-  if (process.env.NODE_ENV === "production") notFound();
+  if (!showDevNav()) notFound();
 
   const { owner } = await params;
 

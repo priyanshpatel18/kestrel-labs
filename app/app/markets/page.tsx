@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/markets/StatusBadge";
 import { fetchAllMarkets } from "@/lib/db/queries";
+import { showDevNav } from "@/lib/showDevNav";
 import {
   formatDateTime,
   formatStrike,
@@ -24,7 +25,7 @@ interface MarketsPageProps {
 }
 
 export default async function MarketsPage({ searchParams }: MarketsPageProps) {
-  if (process.env.NODE_ENV === "production") notFound();
+  if (!showDevNav()) notFound();
 
   const sp = await searchParams;
   const statusFilter = sp.status && sp.status !== "all" ? sp.status : undefined;

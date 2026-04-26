@@ -16,6 +16,7 @@ import {
 } from "@/lib/format";
 import type { EventRow, MarketRow } from "@/lib/types";
 import { buildIndexerConnections } from "@/lib/indexer/connections";
+import { showDevNav } from "@/lib/showDevNav";
 import { PublicKey } from "@solana/web3.js";
 
 export const dynamic = "force-dynamic";
@@ -43,7 +44,7 @@ const SIG_FIELDS: Array<{
 ];
 
 export default async function MarketDetail({ params }: MarketDetailProps) {
-  if (process.env.NODE_ENV === "production") notFound();
+  if (!showDevNav()) notFound();
 
   const { id } = await params;
   const marketId = Number(id);

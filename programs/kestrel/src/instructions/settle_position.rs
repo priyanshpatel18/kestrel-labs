@@ -3,7 +3,7 @@ use anchor_lang::prelude::*;
 use crate::constants::{AGENT_SEED, MARKET_SEED};
 use crate::error::KestrelError;
 use crate::events::AgentSettled;
-use crate::state::{AgentProfile, Market, MarketStatus, Outcome};
+use crate::state::{AgentProfile, Market, MarketStatus, OpenPosition, Outcome};
 
 #[derive(Accounts)]
 #[instruction(id: u32, agent_owner: Pubkey)]
@@ -37,12 +37,14 @@ pub fn handler(ctx: Context<SettlePosition>, _id: u32, _agent_owner: Pubkey) -> 
         .find_position(market_id)
         .ok_or(KestrelError::PositionNotFound)?;
 
-    let pos = &mut agent.positions[slot];
-    require!(!pos.settled, KestrelError::PositionAlreadySettled);
+    require!(
+        !agent.positions[slot].settled,
+        KestrelError::PositionAlreadySettled
+    );
 
     let payout: u64 = match winner {
-        Outcome::Yes => pos.yes_shares,
-        Outcome::No => pos.no_shares,
+        Outcome::Yes => agent.positions[slot].yes_shares,
+        Outcome::No => agent.positions[slot].no_shares,
     };
 
     let solvency_budget = (market.seeded_liquidity as u128)
@@ -50,11 +52,13 @@ pub fn handler(ctx: Context<SettlePosition>, _id: u32, _agent_owner: Pubkey) -> 
         .ok_or(KestrelError::MathOverflow)?;
     require!((payout as u128) <= solvency_budget, KestrelError::Insolvent);
 
-    pos.settled = true;
     agent.balance = agent
         .balance
         .checked_add(payout)
         .ok_or(KestrelError::MathOverflow)?;
+
+    // Free the slot for later markets (same as cancel_bet leaving zeros).
+    agent.positions[slot] = OpenPosition::default();
 
     let owner = agent.owner;
     msg!(

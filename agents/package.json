@@ -10,6 +10,7 @@
     "dev:risk": "ts-node --transpile-only src/risk_lp.ts",
     "dev:all": "concurrently -n ops,trader,risk -c yellow,cyan,magenta \"pnpm dev:ops\" \"pnpm dev:trader\" \"pnpm dev:risk\"",
     "fund": "ts-node --transpile-only scripts/fund-agents.ts",
+    "withdraw": "ts-node --transpile-only scripts/withdraw-demo.ts",
     "prebuild": "node ../scripts/ensure-idl.mjs",
     "build": "tsc -p tsconfig.json"
   },

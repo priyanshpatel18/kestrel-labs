@@ -40,6 +40,43 @@ const FOUR_COL_KINDS = new Set([
   "place_bet",
 ]);
 
+/** On-chain Anchor error name → judge-friendly bucket (intent vs rails). */
+function betBlockedGate(
+  reason: string | null | undefined,
+): "policy" | "chain" | "unknown" {
+  if (!reason) return "unknown";
+  const policy = new Set([
+    "OverPolicyCap",
+    "MarketNotAllowed",
+    "AgentPaused",
+  ]);
+  const chain = new Set([
+    "OracleStale",
+    "OracleMismatch",
+    "OracleDeserialize",
+    "MarketHalted",
+    "MarketNotOpen",
+    "MarketClosed",
+    "OutsideMarketWindow",
+    "InsufficientBalance",
+    "TooManyPositions",
+  ]);
+  if (policy.has(reason)) return "policy";
+  if (chain.has(reason)) return "chain";
+  return "unknown";
+}
+
+function blockedLabel(
+  accepted: boolean,
+  reason: string | null | undefined,
+): string {
+  if (accepted) return "accepted";
+  const gate = betBlockedGate(reason);
+  if (gate === "policy") return "policy blocked";
+  if (gate === "chain") return "chain blocked";
+  return "blocked";
+}
+
 function Stat({
   label,
   value,
@@ -111,7 +148,7 @@ export function DecisionCard({ event }: { event: EventRow }) {
                 : "inline-flex items-center gap-1 rounded-md bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive"
             }
           >
-            {d.accepted ? "policy accepted" : "policy blocked"}
+            {d.accepted ? "accepted" : blockedLabel(d.accepted, d.reason)}
             {d.reason && (
               <span className="ml-1 font-mono text-[11px] opacity-80">
                 {d.reason}
@@ -190,7 +227,7 @@ export function DecisionCard({ event }: { event: EventRow }) {
                 : "inline-flex items-center gap-1 rounded-md bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive"
             }
           >
-            {d.accepted ? "accepted" : "blocked"}
+            {blockedLabel(d.accepted, d.reason)}
           </span>
         </div>
         <Stat label="Reason" value={d.reason ?? (d.accepted ? "—" : "unknown")} />

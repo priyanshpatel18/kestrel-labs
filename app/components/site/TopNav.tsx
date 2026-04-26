@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { bricolage } from "@/lib/font";
+import { showDevNav } from "@/lib/showDevNav";
 import { ThemeToggle } from "./ThemeToggle";
 import { cn } from "@/lib/utils";
 
@@ -15,7 +16,13 @@ export function TopNav() {
         </Link>
 
         <nav className="hidden items-center gap-5 text-sm text-muted-foreground sm:flex">
-          {process.env.NODE_ENV !== "production" ? (
+          <Link
+            href="/stats"
+            className="transition-colors hover:text-foreground"
+          >
+            Stats
+          </Link>
+          {showDevNav() ? (
             <>
               <Link
                 href="/markets"

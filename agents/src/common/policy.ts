@@ -36,14 +36,16 @@ export function defaultPolicyFor(role: AgentRole): AgentPolicyTpl {
     case "trader":
       return {
         maxStakePerWindow: envBn("AGENTS_TRADER_MAX_STAKE", 500_000),
-        maxOpenPositions: 8,
+        // Match on-chain MAX_POSITIONS (16) so long-running demos are not capped
+        // below physical slots; stale windows are flattened in trader.ts.
+        maxOpenPositions: Number(process.env.AGENTS_TRADER_MAX_OPEN_POSITIONS || 16),
         allowedMarketsRoot: feedBytes(),
         paused: false,
       };
     case "risk_lp":
       return {
         maxStakePerWindow: envBn("AGENTS_RISK_LP_MAX_STAKE", 250_000),
-        maxOpenPositions: 4,
+        maxOpenPositions: Number(process.env.AGENTS_RISK_LP_MAX_OPEN_POSITIONS || 16),
         allowedMarketsRoot: feedBytes(),
         paused: false,
       };
