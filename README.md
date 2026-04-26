@@ -25,18 +25,18 @@ Product framing and naming notes live in [`AGENTIC_HACK_IDEA.md`](./AGENTIC_HACK
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Solana base (devnet)                                       │
-│  Config, USDC vault, create_market, delegate_*, deposit,     │
-│  withdraw, agent / market account owners pre-delegation      │
+┌───────────────────────────────────────────────────────────┐
+│  Solana base (devnet)                                     │
+│  Config, USDC vault, create_market, delegate_*, deposit,  │
+│  withdraw, agent / market account owners pre-delegation   │
 └───────────────────────────┬───────────────────────────────┘
                             │ delegate + commit / undelegate
                             ▼
-┌─────────────────────────────────────────────────────────────┐
-│  MagicBlock Ephemeral Rollup                                 │
+┌───────────────────────────────────────────────────────────┐
+│  MagicBlock Ephemeral Rollup                              │
 │  Market AMM state, AgentProfile balances & positions,          │
-│  place_bet, cancel_bet, close_position, close_market,        │
-│  settle_position(s), halt/resume, commit_and_undelegate_*    │
+│  place_bet, cancel_bet, close_position, close_market,     │
+│  settle_position(s), halt/resume, commit_and_undelegate_* │
 └───────────────────────────┬───────────────────────────────┘
                             │ RPC + signed txs
         ┌───────────────────┼───────────────────┐
@@ -57,6 +57,92 @@ Product framing and naming notes live in [`AGENTIC_HACK_IDEA.md`](./AGENTIC_HACK
 | `tests` | Integration tests against program + ER where applicable. |
 
 Default **devnet program id** is declared in [`Anchor.toml`](./Anchor.toml) under `[programs.devnet]`; override with `KESTREL_PROGRAM_ID` in app and worker env when you deploy your own keypair.
+
+## Technical reference
+
+### Stack
+
+| Piece | Notes |
+|--------|--------|
+| Anchor | Version pinned in [`Anchor.toml`](./Anchor.toml) (`anchor_version`; workspace uses Anchor **0.32.x**). |
+| Solana / SVM | Program and clients target **Solana**; agents and scheduler use `@solana/web3.js` + Anchor TS. |
+| MagicBlock ER | Delegation and ER sends use **`@magicblock-labs/ephemeral-rollups-sdk`** and a dedicated **ER RPC** (see env examples). |
+| Monorepo | **pnpm** workspaces; root [`package.json`](./package.json) holds shared JS deps; each package has its own `package.json` where needed. |
+
+### On-chain program (`programs/kestrel`)
+
+Single crate `kestrel`, compiled with Anchor’s **`#[ephemeral]`** attribute so the same instruction set can execute against **base** and **Ephemeral Rollup** connections depending on account delegation state. The `declare_id!` in `lib.rs` matches **localnet** in [`Anchor.toml`](./Anchor.toml); **devnet** deployments use the program id under `[programs.devnet]` (clients should follow env / IDL address, not assume the declare_id in source).
+
+**Core accounts**
+
+| Account | Purpose |
+|---------|---------|
+| `Config` | Admin, treasury, USDC mint, default BTC/USD price update pubkey, `fee_bps`, `market_count`. |
+| `Vault` | Program-owned USDC holding; `deposit` / `withdraw` move tokens against agent liability. |
+| `Market` | Per-id market PDA: schedule (`open_ts`, `close_ts`), `strike`, `status` (pending / open / halted / closed), oracle feed, CPMM reserves, winner after close. |
+| `AgentProfile` | Per-owner PDA: `balance` (ER-side liability while delegated), `policy`, `status`, fixed-size **`positions`** array (`MAX_POSITIONS = 16`, see `constants.rs`). |
+
+**`AgentPolicy` (enforced inside instructions)**
+
+- `max_stake_per_window` — collateral cap per bet relative to policy.
+- `max_open_positions` — distinct non-empty positions the agent may hold at once (separate from the physical slot array size).
+- `allowed_markets_root` — `[0; 32]` disables the gate; otherwise must match the market’s oracle feed bytes for `place_bet`.
+- `paused` — blocks trading when set (with `AgentStatus`).
+
+**PDA seeds** (see `programs/kestrel/src/constants.rs`)
+
+- `config` → `Config`
+- `vault` → `Vault`
+- `market` + `id.to_le_bytes()` → `Market`
+- `agent` + owner pubkey → `AgentProfile`
+
+**Instructions** (public API on `kestrel`; grouping reflects typical call site, not a second program ID)
+
+Lifecycle and custody (often **base** RPC for undelegated accounts or admin-only paths):
+
+- `init_config`, `migrate_config`
+- `register_agent`, `update_policy`
+- `deposit`, `withdraw`
+- `create_market`, `delegate_market`, `delegate_agent`
+- `commit_and_undelegate_agent`, `commit_and_undelegate_market`, `commit_market`
+
+Trading and resolution (**ER** RPC once `Market` / `AgentProfile` are delegated):
+
+- `open_market` — activates book on ER, reads strike from oracle at open time, seeds liquidity.
+- `place_bet`, `cancel_bet`, `close_position` — CPMM-style YES/NO; oracle freshness and policy checks on `place_bet`.
+- `halt_market`, `resume_market` — admin (`Config.admin`).
+- `close_market` — after `close_ts`, reads oracle, sets winner and **closed**.
+- `settle_position`, `settle_positions` — pay winning side into agent balance and clear position slot(s) where applicable.
+
+Constants worth citing in client code: `ORACLE_MAX_AGE_SECS`, `MIN_SEED_LIQUIDITY`, `DEFAULT_FEE_BPS` (100 = 1% unless config overrides at init).
+
+### IDL and shared program id
+
+- `anchor build` emits **`target/idl/kestrel.json`**.
+- The **Next.js** app imports that IDL from [`app/lib/indexer/decode.ts`](./app/lib/indexer/decode.ts) (and related API tx builders).
+- **Agents** import the same JSON via [`agents/src/common/connections.ts`](./agents/src/common/connections.ts).
+
+After upgrading the program, rebuild and **restart** any long-lived Node process that bundles the IDL so account metas and discriminators stay in sync.
+
+### Off-chain components
+
+| Component | Tech | Role |
+|-----------|------|------|
+| `scheduler/` | TypeScript | Horizon scan, `create_market` + `delegate_market`, ER `open_market` / `close_market`, commit paths; uses admin keypair from env. |
+| `agents/` | TypeScript | Three roles; `ensureErTradingReady` (undelegate if needed, deposit, `delegate_agent`); trading via Anchor or optional `KESTREL_API_BASE_URL` to [`app/app/api/v1`](./app/app/api/v1). |
+| `app/` | Next.js  (App Router) | UI, REST builders for unsigned txs, optional **`instrumentation`** indexer writing to Supabase when `KESTREL_INDEXER_ENABLED=true`. |
+
+Env templates: [`app/.env.example`](./app/.env.example), [`agents/.env.example`](./agents/.env.example), [`scheduler/.env.example`](./scheduler/.env.example).
+
+### Tests
+
+From repo root (see `[scripts]` in [`Anchor.toml`](./Anchor.toml)):
+
+```bash
+anchor build
+anchor run test      # ts-mocha against tests/**/*.ts
+anchor run test-er   # same with RUN_ER_TESTS=1 for ER-sensitive paths
+```
 
 ## Quick start (local)
 
