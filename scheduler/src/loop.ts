@@ -65,6 +65,8 @@ interface SchedulerRuntimeState {
   lastFullRefreshMs: number;
   lastAgentDelegateMs: number;
   ticking: boolean;
+  /** Coalesces one catch-up tick if a single run exceeded the interval (RPC-heavy ticks). */
+  catchupScheduled: boolean;
 }
 
 const AGENT_DELEGATE_INTERVAL_MS = 30_000;
@@ -109,6 +111,7 @@ export async function startScheduler(
     lastFullRefreshMs: 0,
     lastAgentDelegateMs: 0,
     ticking: false,
+    catchupScheduled: false,
   };
 
   await refreshMarkets(conns, state, log).catch((err) => {
@@ -232,8 +235,8 @@ async function tick(
 ): Promise<void> {
   if (state.ticking) return;
   state.ticking = true;
+  const tickStartMs = Date.now();
   try {
-    const tickStartMs = Date.now();
 
     if (tickStartMs - state.lastFullRefreshMs > cfg.marketListRefreshMs) {
       await refreshMarkets(conns, state, log).catch((err) => {
@@ -255,12 +258,21 @@ async function tick(
     for (let h = 0; h < MAX_HORIZON_CREATE_DELEGATE_PER_TICK; h++) {
       const createdId = await ensureHorizonOnce(conns, cfg, state.horizon, log);
       if (createdId === null) break;
-      await refreshMarkets(conns, state, log).catch((err) => {
+      // Full listMarkets is expensive at high market_count — only refetch the new row.
+      await refreshOneMarket(conns, state, createdId).catch((err) => {
         log.warn(
-          { err: String(err?.message || err) },
-          "tick: post-create market refresh failed",
+          { err: String(err?.message || err), market_id: createdId },
+          "tick: post-create single market refresh failed",
         );
       });
+      if (!state.markets.has(createdId)) {
+        await refreshMarkets(conns, state, log).catch((err) => {
+          log.warn(
+            { err: String(err?.message || err) },
+            "tick: post-create full market refresh failed",
+          );
+        });
+      }
       await runErOpenClosePass(conns, cfg, state, log);
     }
 
@@ -313,6 +325,17 @@ async function tick(
     log.error({ err: String(err?.message || err) }, "tick: unexpected error");
   } finally {
     state.ticking = false;
+    const elapsed = Date.now() - tickStartMs;
+    if (
+      elapsed > Math.max(cfg.tickMs * 5, 2_500) &&
+      !state.catchupScheduled
+    ) {
+      state.catchupScheduled = true;
+      setImmediate(() => {
+        state.catchupScheduled = false;
+        void tick(conns, cfg, state, log);
+      });
+    }
   }
 }
 

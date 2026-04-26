@@ -151,6 +151,36 @@ export async function fetchMarketSnapshot(
   }
 }
 
+/** Parallel Anchor fetches per batch — avoids O(n) sequential RPC latency on large market counts. */
+const LIST_MARKETS_FETCH_CONCURRENCY = 16;
+
+async function fetchMarketRowWithBaseOwner(
+  conns: KestrelConnections,
+  pda: PublicKey,
+  baseOwner: PublicKey,
+): Promise<MarketSnapshot | null> {
+  const isDelegated = baseOwner.equals(DELEGATION_PROGRAM_ID);
+  const fetchProgram = isDelegated ? conns.erProgram : conns.baseProgram;
+  try {
+    const acc = await (fetchProgram as any).account.market.fetch(pda);
+    return {
+      pda,
+      id: Number(acc.id),
+      openTs: Number(acc.openTs),
+      closeTs: Number(acc.closeTs),
+      status: statusKeyToName(acc.status),
+      strike: acc.strike,
+      oracleFeed: acc.oracleFeed as PublicKey,
+      winner: winnerToName(acc.winner),
+      ownerProgram: baseOwner,
+      isDelegated,
+    };
+  } catch {
+    // Best-effort: ER may not yet have synced this account.
+    return null;
+  }
+}
+
 export async function listMarkets(
   conns: KestrelConnections,
   upToId: number,
@@ -172,34 +202,25 @@ export async function listMarkets(
     baseInfos.push(...infos.map((x) => (x ? { owner: x.owner } : null)));
   }
 
-  const out: MarketSnapshot[] = [];
+  const work: Array<{ pda: PublicKey; owner: PublicKey }> = [];
   for (let id = 0; id < pdas.length; id++) {
-    const pda = pdas[id];
     const baseInfo = baseInfos[id];
-    if (!baseInfo) {
-      // The PDA was never created (gap in id space). Skip silently.
-      continue;
-    }
-    const isDelegated = baseInfo.owner.equals(DELEGATION_PROGRAM_ID);
-    const fetchProgram = isDelegated ? conns.erProgram : conns.baseProgram;
-    try {
-      const acc = await (fetchProgram as any).account.market.fetch(pda);
-      out.push({
-        pda,
-        id: Number(acc.id),
-        openTs: Number(acc.openTs),
-        closeTs: Number(acc.closeTs),
-        status: statusKeyToName(acc.status),
-        strike: acc.strike,
-        oracleFeed: acc.oracleFeed as PublicKey,
-        winner: winnerToName(acc.winner),
-        ownerProgram: baseInfo.owner,
-        isDelegated,
-      });
-    } catch {
-      // Best-effort: ER may not yet have synced this account.
+    if (!baseInfo) continue;
+    work.push({ pda: pdas[id], owner: baseInfo.owner });
+  }
+
+  const out: MarketSnapshot[] = [];
+  for (let i = 0; i < work.length; i += LIST_MARKETS_FETCH_CONCURRENCY) {
+    const slice = work.slice(i, i + LIST_MARKETS_FETCH_CONCURRENCY);
+    const rows = await Promise.all(
+      slice.map((w) => fetchMarketRowWithBaseOwner(conns, w.pda, w.owner)),
+    );
+    for (const row of rows) {
+      if (row) out.push(row);
     }
   }
+
+  out.sort((a, b) => a.id - b.id);
   return out;
 }
 
