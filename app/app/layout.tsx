@@ -1,3 +1,4 @@
+import { IndexerMarketsRouterRefresh } from "@/components/markets/IndexerMarketsRouterRefresh";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { SiteFooter } from "@/components/site/SiteFooter";
 import { TopNav } from "@/components/site/TopNav";
@@ -34,6 +35,7 @@ export default function RootLayout({
       <body className="min-h-full bg-background font-sans text-foreground">
         <ThemeProvider>
           <div className="flex min-h-dvh flex-col">
+            <IndexerMarketsRouterRefresh />
             <TopNav />
             <main className="flex flex-1 flex-col">{children}</main>
             <SiteFooter />

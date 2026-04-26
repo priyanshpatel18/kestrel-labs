@@ -43,10 +43,7 @@ function formatErr(err: any): Record<string, unknown> {
     err?.errorCode?.code ??
     null;
 
-  const logs = Array.isArray(err?.logs) ? err.logs : null;
-  const stack = typeof err?.stack === "string" ? err.stack : null;
-
-  return { message, anchorCode, logs, stack };
+  return { message, anchorCode };
 }
 
 interface PerMarketState {

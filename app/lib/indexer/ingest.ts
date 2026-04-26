@@ -197,7 +197,6 @@ async function fetchMarketStrikePrice(params: {
       if (attempt === maxAttempts - 1) {
         log.debug("fetchMarketStrikePrice failed", {
           cluster,
-          market: marketPda,
           err: String((err as unknown as { message?: string })?.message || err),
         });
         return null;
@@ -278,7 +277,6 @@ async function insertEvents(rows: EventRow[]): Promise<void> {
     const msg = String(error.message || error);
     log.warn("events upsert failed", {
       error: msg.length > 500 ? `${msg.slice(0, 500)}…` : msg,
-      sample: rows[0]?.signature,
     });
   }
 }
@@ -381,7 +379,6 @@ export async function ingestSignature(
   } catch (err) {
     log.debug("getParsedTransaction failed", {
       cluster,
-      signature,
       err: String((err as Error).message),
     });
     return { decoded: 0, written: 0, skipped: 1 };
@@ -750,7 +747,6 @@ export async function ingestSignature(
 
   log.debug("ingested", {
     cluster,
-    signature,
     decoded: candidates.length,
     events: anchorEvents.length,
     rows: eventRows.length,

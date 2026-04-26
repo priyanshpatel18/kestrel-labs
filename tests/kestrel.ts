@@ -605,8 +605,6 @@ erDescribe("kestrel devnet ER", function () {
   let validatorFqdn: string | undefined;
 
   before(async () => {
-    console.log("Base RPC:", baseRpcUrl);
-    console.log("ER RPC:  ", erRpcUrl);
     console.log("Wallet:  ", wallet.publicKey.toBase58());
     const balance = await baseConnection.getBalance(wallet.publicKey);
     console.log(
@@ -614,19 +612,14 @@ erDescribe("kestrel devnet ER", function () {
     );
     if (balance < ER_MIN_WALLET_LAMPORTS) {
       throw new Error(
-        `Wallet ${wallet.publicKey.toBase58()} needs >= ${ER_MIN_WALLET_LAMPORTS / LAMPORTS_PER_SOL} SOL on ${baseRpcUrl} for the ER suite`,
+        `Wallet ${wallet.publicKey.toBase58()} needs >= ${ER_MIN_WALLET_LAMPORTS / LAMPORTS_PER_SOL} SOL on the base layer for the ER suite`,
       );
     }
 
     const v = await erValidatorRouter.getClosestValidator();
     validatorIdentity = new PublicKey(v.identity);
     validatorFqdn = (v as any).fqdn;
-    console.log(
-      "Closest validator identity:",
-      validatorIdentity.toBase58(),
-      "fqdn:",
-      validatorFqdn,
-    );
+    console.log("Closest validator identity:", validatorIdentity.toBase58());
 
     const cfgInfo = await baseConnection.getAccountInfo(config, "confirmed");
     if (cfgInfo) {

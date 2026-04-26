@@ -12,6 +12,9 @@ export async function register(): Promise<void> {
     await startIndexer();
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error("[indexer] failed to start", err);
+    console.error(
+      "[indexer] failed to start",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }

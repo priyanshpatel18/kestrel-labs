@@ -49,10 +49,7 @@ async function main(): Promise<void> {
         .rpc({ commitment: "confirmed" });
     } catch (err: any) {
       log.error(
-        {
-          err: String(err?.message || err),
-          logs: err?.logs,
-        },
+        { err: String(err?.message || err) },
         "kestrel-scheduler: migrate_config failed (is devnet program upgraded?)",
       );
       process.exit(5);
@@ -109,7 +106,7 @@ async function main(): Promise<void> {
 
   process.on("uncaughtException", (err) => {
     log.error(
-      { err: String(err?.message || err), stack: (err as any)?.stack },
+      { err: String(err?.message || err) },
       "kestrel-scheduler: uncaughtException",
     );
   });
@@ -124,6 +121,9 @@ async function main(): Promise<void> {
 main().catch((err) => {
   // Fall back to console because the logger may not have initialized.
   // eslint-disable-next-line no-console
-  console.error("kestrel-scheduler: fatal", err);
+  console.error(
+    "kestrel-scheduler: fatal",
+    err instanceof Error ? err.message : String(err),
+  );
   process.exit(1);
 });

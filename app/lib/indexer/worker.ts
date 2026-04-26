@@ -232,8 +232,7 @@ export async function startIndexer(): Promise<WorkerHandle> {
   const conns = buildIndexerConnections(env);
   log.info("indexer boot", {
     program_id: conns.programId.toBase58(),
-    base_rpc: env.baseRpcUrl,
-    er_rpc: env.erRpcUrl,
+    clusters: ["base", "er"],
   });
 
   const states: ClusterState[] = (["base", "er"] as Cluster[]).map(

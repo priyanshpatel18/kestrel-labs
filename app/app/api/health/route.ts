@@ -28,17 +28,16 @@ export async function GET() {
         ok: true,
         cluster: "base",
         slot,
-        rpcUrl: url,
         servedAt: Date.now(),
       },
       { headers: { "cache-control": "public, max-age=5" } },
     );
   } catch (err: any) {
+    const msg = String(err?.message || err);
     return NextResponse.json(
       {
         ok: false,
-        error: String(err?.message || err),
-        rpcUrl: url,
+        error: msg.length > 200 ? `${msg.slice(0, 200)}…` : msg,
         servedAt: Date.now(),
       },
       { status: 503 },
