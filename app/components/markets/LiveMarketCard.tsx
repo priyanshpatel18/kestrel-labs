@@ -72,7 +72,8 @@ export function LiveMarketCard({
         .order("market_id", { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (data) setMarket(data as MarketRow);
+      // Must clear when the window ends: no row matches until the next market opens.
+      setMarket((data as MarketRow | null) ?? null);
     };
 
     const refreshCloses = async () => {
@@ -107,36 +108,37 @@ export function LiveMarketCard({
         (payload: { new: MarketRow }) => {
           const row = payload.new;
           if (!row) return;
-          if (row.status === "open") {
+          if (row.status === "open" || row.status === "halted") {
             setMarket(row);
-          } else if (
-            market &&
-            row.market_id === market.market_id &&
-            (row.status === "closed" || row.status === "settled")
-          ) {
+            return;
+          }
+          if (row.status === "closed" || row.status === "settled") {
+            setMarket((prev) =>
+              prev && prev.market_id === row.market_id ? null : prev,
+            );
             void refreshNow();
             void refreshCloses();
-          } else {
-            void refreshCloses();
+            return;
           }
+          void refreshNow();
+          void refreshCloses();
         },
       )
       .subscribe();
 
+    void refreshNow();
+    void refreshCloses();
+
     const tick = window.setInterval(() => {
-      if (!market || !market.close_ts) return;
-      const now = Math.floor(Date.now() / 1000);
-      if (now >= market.close_ts) {
-        void refreshNow();
-        void refreshCloses();
-      }
-    }, 5000);
+      void refreshNow();
+      void refreshCloses();
+    }, 2500);
 
     return () => {
       window.clearInterval(tick);
       void supabase.removeChannel(channel);
     };
-  }, [market]);
+  }, [market?.market_id]);
 
   useEffect(() => {
     if (!market?.market_id) return;
