@@ -1,6 +1,6 @@
 import type { SchedulerConfig } from "./config";
 import type { KestrelConnections } from "./connections";
-import { describeEndpoints, getValidatorIdentity } from "./connections";
+import { getValidatorIdentity } from "./connections";
 import { SchedulerLogger, marketLogger } from "./log";
 import {
   MarketSnapshot,
@@ -70,6 +70,8 @@ interface SchedulerRuntimeState {
 const FULL_REFRESH_INTERVAL_MS = 5_000;
 const AGENT_DELEGATE_INTERVAL_MS = 30_000;
 const PER_OP_COOLDOWN_MS = 8_000;
+/** Max create+delegate pairs per tick so one slow tick cannot starve ER work forever. */
+const MAX_HORIZON_CREATE_DELEGATE_PER_TICK = 8;
 // Small delay helps avoid clock skew between local wall-clock and on-chain Clock sysvar.
 const ONCHAIN_CLOCK_SKEW_BUFFER_SECS = 2;
 
@@ -84,9 +86,6 @@ export async function startScheduler(
       horizon_secs: cfg.horizonSecs,
       tick_ms: cfg.tickMs,
       seed_liquidity: cfg.seedLiquidity.toString(),
-      endpoints: describeEndpoints(cfg),
-      wallet: conns.wallet.publicKey.toBase58(),
-      program_id: conns.programId.toBase58(),
     },
     "scheduler: starting",
   );
@@ -194,7 +193,74 @@ async function tick(
       });
     }
 
-    void ensureHorizonOnce(conns, cfg, state.horizon, log);
+    // Phase 1 — ER: all eligible open_market + close_market in parallel (per-market).
+    const erPhase: Promise<void>[] = [];
+    for (const market of state.markets.values()) {
+      const per = getOrInitPerMarket(state, market.id);
+      if (per.doneAt !== null) continue;
+
+      if (
+        market.status === "pending" &&
+        market.isDelegated &&
+        nowSecs >= market.openTs + ONCHAIN_CLOCK_SKEW_BUFFER_SECS &&
+        !per.inFlight.has("open") &&
+        nowMs - per.lastOpenAttemptMs > PER_OP_COOLDOWN_MS
+      ) {
+        per.inFlight.add("open");
+        per.lastOpenAttemptMs = nowMs;
+        erPhase.push(handleOpen(conns, cfg, state, log, market));
+        continue;
+      }
+
+      if (
+        (market.status === "open" || market.status === "halted") &&
+        market.isDelegated &&
+        nowSecs >= market.closeTs + ONCHAIN_CLOCK_SKEW_BUFFER_SECS &&
+        !per.inFlight.has("close") &&
+        nowMs - per.lastCloseAttemptMs > PER_OP_COOLDOWN_MS
+      ) {
+        per.inFlight.add("close");
+        per.lastCloseAttemptMs = nowMs;
+        erPhase.push(handleClose(conns, cfg, state, log, market));
+      }
+    }
+    await Promise.allSettled(erPhase);
+
+    // Phase 2 — base: create_market then delegate_market (ordered per market id); may run multiple pairs per tick up to cap.
+    for (let h = 0; h < MAX_HORIZON_CREATE_DELEGATE_PER_TICK; h++) {
+      const createdId = await ensureHorizonOnce(conns, cfg, state.horizon, log);
+      if (createdId === null) break;
+      await refreshMarkets(conns, state, log).catch((err) => {
+        log.warn(
+          { err: String(err?.message || err) },
+          "tick: post-create market refresh failed",
+        );
+      });
+    }
+
+    // Phase 3 — ER: settle_positions batched + commit_and_undelegate_market per market, all markets in parallel.
+    const settlePhase: Promise<void>[] = [];
+    for (const market of state.markets.values()) {
+      const per = getOrInitPerMarket(state, market.id);
+      if (per.doneAt !== null) continue;
+
+      if (
+        market.status === "closed" &&
+        market.isDelegated &&
+        !per.inFlight.has("settle") &&
+        nowMs - per.lastSettleAttemptMs > PER_OP_COOLDOWN_MS
+      ) {
+        per.inFlight.add("settle");
+        per.lastSettleAttemptMs = nowMs;
+        settlePhase.push(handleSettle(conns, cfg, state, log, market));
+        continue;
+      }
+
+      if (market.status === "closed" && !market.isDelegated) {
+        per.doneAt = nowMs;
+      }
+    }
+    await Promise.allSettled(settlePhase);
 
     if (nowMs - state.lastAgentDelegateMs > AGENT_DELEGATE_INTERVAL_MS) {
       state.lastAgentDelegateMs = nowMs;
@@ -210,56 +276,6 @@ async function tick(
         );
       });
     }
-
-    const promises: Promise<void>[] = [];
-    for (const market of state.markets.values()) {
-      const per = getOrInitPerMarket(state, market.id);
-      if (per.doneAt !== null) continue;
-
-      if (
-        market.status === "pending" &&
-        market.isDelegated &&
-        nowSecs >= market.openTs + ONCHAIN_CLOCK_SKEW_BUFFER_SECS &&
-        !per.inFlight.has("open") &&
-        nowMs - per.lastOpenAttemptMs > PER_OP_COOLDOWN_MS
-      ) {
-        per.inFlight.add("open");
-        per.lastOpenAttemptMs = nowMs;
-        promises.push(handleOpen(conns, cfg, state, log, market));
-        continue;
-      }
-
-      if (
-        (market.status === "open" || market.status === "halted") &&
-        market.isDelegated &&
-        nowSecs >= market.closeTs + ONCHAIN_CLOCK_SKEW_BUFFER_SECS &&
-        !per.inFlight.has("close") &&
-        nowMs - per.lastCloseAttemptMs > PER_OP_COOLDOWN_MS
-      ) {
-        per.inFlight.add("close");
-        per.lastCloseAttemptMs = nowMs;
-        promises.push(handleClose(conns, cfg, state, log, market));
-        continue;
-      }
-
-      if (
-        market.status === "closed" &&
-        market.isDelegated &&
-        !per.inFlight.has("settle") &&
-        nowMs - per.lastSettleAttemptMs > PER_OP_COOLDOWN_MS
-      ) {
-        per.inFlight.add("settle");
-        per.lastSettleAttemptMs = nowMs;
-        promises.push(handleSettle(conns, cfg, state, log, market));
-        continue;
-      }
-
-      if (market.status === "closed" && !market.isDelegated) {
-        per.doneAt = nowMs;
-      }
-    }
-
-    await Promise.allSettled(promises);
   } catch (err: any) {
     log.error({ err: String(err?.message || err) }, "tick: unexpected error");
   } finally {

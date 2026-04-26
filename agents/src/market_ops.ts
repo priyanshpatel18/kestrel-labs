@@ -171,8 +171,6 @@ async function main(): Promise<void> {
   const conns = buildConnections("market_ops");
   log.info(
     {
-      base: conns.env.baseRpcUrl,
-      er: conns.env.erRpcUrl,
       admin: conns.signerKeypair.publicKey.toBase58(),
       forceHaltEvery: FORCE_HALT_EVERY,
       staleThresholdSecs: STALE_THRESHOLD_SECS,

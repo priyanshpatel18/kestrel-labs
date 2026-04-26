@@ -1,5 +1,5 @@
 import { loadConfig as loadEnv } from "./config";
-import { buildConnections, describeEndpoints } from "./connections";
+import { buildConnections } from "./connections";
 import { getLogger } from "./log";
 import { startScheduler } from "./loop";
 import { configPda, loadConfig as loadOnchainConfig } from "./state";
@@ -14,7 +14,6 @@ async function main(): Promise<void> {
       horizon_secs: cfg.horizonSecs,
       tick_ms: cfg.tickMs,
       seed_liquidity: cfg.seedLiquidity.toString(),
-      endpoints: describeEndpoints(cfg),
     },
     "kestrel-scheduler: boot",
   );

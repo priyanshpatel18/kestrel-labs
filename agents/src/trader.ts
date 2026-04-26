@@ -281,9 +281,7 @@ async function main(): Promise<void> {
   const conns = buildConnections("trader");
   log.info(
     {
-      base: conns.env.baseRpcUrl,
-      er: conns.env.erRpcUrl,
-      kestrelApi: conns.env.kestrelApiBaseUrl ?? null,
+      kestrel_api_mode: conns.env.kestrelApiBaseUrl ? "http" : "chain",
       owner: conns.signerKeypair.publicKey.toBase58(),
       baseSize: BASE_SIZE,
     },

@@ -254,9 +254,7 @@ async function main(): Promise<void> {
   const conns = buildConnections("risk_lp");
   log.info(
     {
-      base: conns.env.baseRpcUrl,
-      er: conns.env.erRpcUrl,
-      kestrelApi: conns.env.kestrelApiBaseUrl ?? null,
+      kestrel_api_mode: conns.env.kestrelApiBaseUrl ? "http" : "chain",
       owner: conns.signerKeypair.publicKey.toBase58(),
       hedgeSize: HEDGE_SIZE,
       hedgesPerMarket: HEDGES_PER_MARKET,

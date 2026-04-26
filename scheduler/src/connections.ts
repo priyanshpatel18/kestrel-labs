@@ -66,14 +66,6 @@ export function buildConnections(cfg: SchedulerConfig): KestrelConnections {
   };
 }
 
-export function describeEndpoints(cfg: SchedulerConfig): string {
-  return [
-    `base=${cfg.baseRpcUrl}`,
-    `er=${cfg.erRpcUrl}`,
-    `router=${cfg.validatorLookupUrl}`,
-  ].join(" ");
-}
-
 let cachedValidatorIdentity: PublicKey | null = null;
 
 export async function getValidatorIdentity(
