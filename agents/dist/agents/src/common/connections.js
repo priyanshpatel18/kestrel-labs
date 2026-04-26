@@ -87,6 +87,10 @@ function loadEnv() {
     const adminKeypair = loadKeypair(adminKeypairPath);
     const supabaseUrl = process.env.KESTREL_SUPABASE_URL?.trim() || null;
     const supabaseServiceRoleKey = process.env.KESTREL_SUPABASE_SERVICE_ROLE_KEY?.trim() || null;
+    const kestrelApiBaseUrlRaw = process.env.KESTREL_API_BASE_URL?.trim();
+    const kestrelApiBaseUrl = kestrelApiBaseUrlRaw && kestrelApiBaseUrlRaw.length > 0
+        ? kestrelApiBaseUrlRaw.replace(/\/+$/, "")
+        : null;
     return {
         baseRpcUrl,
         erRpcUrl,
@@ -99,6 +103,7 @@ function loadEnv() {
         adminKeypair,
         supabaseUrl,
         supabaseServiceRoleKey,
+        kestrelApiBaseUrl,
     };
 }
 /**

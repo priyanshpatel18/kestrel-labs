@@ -25,6 +25,7 @@ import {
   defaultPolicyFor,
   wrongAllowlistRoot,
 } from "./common/policy";
+import { getKestrelApiBaseUrl, placeBetViaApi } from "./common/kestrelApi";
 import { ensureAgent, ensureErTradingReady, tagAgentRole } from "./common/registry";
 import { extractCustomErrorCode, sendErTx } from "./common/tx";
 
@@ -54,16 +55,26 @@ async function placeBet(params: {
   expectFailure?: string;
 }): Promise<string | null> {
   const { conns, market, side, amount, expectFailure } = params;
-  const sideArg = side === "yes" ? { yes: {} } : { no: {} };
-  const tx = await (conns.erProgram.methods as any)
-    .placeBet(market.id, sideArg, amount)
-    .accounts({
-      owner: conns.signerKeypair.publicKey,
-      priceUpdate: market.oracleFeed,
-    })
-    .transaction();
+  const apiBase = getKestrelApiBaseUrl(conns);
   try {
-    const sig = await sendErTx(conns, tx, [conns.signerKeypair]);
+    const sig = apiBase
+      ? await placeBetViaApi({
+          conns,
+          marketId: market.id,
+          side,
+          amount,
+        })
+      : await (async () => {
+          const sideArg = side === "yes" ? { yes: {} } : { no: {} };
+          const tx = await (conns.erProgram.methods as any)
+            .placeBet(market.id, sideArg, amount)
+            .accounts({
+              owner: conns.signerKeypair.publicKey,
+              priceUpdate: market.oracleFeed,
+            })
+            .transaction();
+          return sendErTx(conns, tx, [conns.signerKeypair]);
+        })();
     log.info(
       {
         market: market.id,
@@ -232,6 +243,7 @@ async function main(): Promise<void> {
     {
       base: conns.env.baseRpcUrl,
       er: conns.env.erRpcUrl,
+      kestrelApi: conns.env.kestrelApiBaseUrl ?? null,
       owner: conns.signerKeypair.publicKey.toBase58(),
       baseSize: BASE_SIZE,
     },

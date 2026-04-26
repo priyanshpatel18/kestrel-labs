@@ -21,6 +21,11 @@ import {
   findActiveOpenMarket,
 } from "./common/markets";
 import { readOracleSnapshot } from "./common/oracle";
+import {
+  cancelBetViaApi,
+  getKestrelApiBaseUrl,
+  placeBetViaApi,
+} from "./common/kestrelApi";
 import { ensureAgent, ensureErTradingReady, tagAgentRole } from "./common/registry";
 import { extractCustomErrorCode, sendErTx } from "./common/tx";
 
@@ -62,16 +67,26 @@ async function placeHedge(
   market: MarketView,
   side: "yes" | "no",
 ): Promise<string | null> {
-  const sideArg = side === "yes" ? { yes: {} } : { no: {} };
-  const tx = await (conns.erProgram.methods as any)
-    .placeBet(market.id, sideArg, new BN(HEDGE_SIZE))
-    .accounts({
-      owner: conns.signerKeypair.publicKey,
-      priceUpdate: market.oracleFeed,
-    })
-    .transaction();
+  const apiBase = getKestrelApiBaseUrl(conns);
   try {
-    const sig = await sendErTx(conns, tx, [conns.signerKeypair]);
+    const sig = apiBase
+      ? await placeBetViaApi({
+          conns,
+          marketId: market.id,
+          side,
+          amount: new BN(HEDGE_SIZE),
+        })
+      : await (async () => {
+          const sideArg = side === "yes" ? { yes: {} } : { no: {} };
+          const tx = await (conns.erProgram.methods as any)
+            .placeBet(market.id, sideArg, new BN(HEDGE_SIZE))
+            .accounts({
+              owner: conns.signerKeypair.publicKey,
+              priceUpdate: market.oracleFeed,
+            })
+            .transaction();
+          return sendErTx(conns, tx, [conns.signerKeypair]);
+        })();
     log.info({ market: market.id, side, amount: HEDGE_SIZE, sig }, "hedge place_bet");
     return sig;
   } catch (err: any) {
@@ -89,14 +104,19 @@ async function cancelMarket(
   market: MarketView,
   reason: string,
 ): Promise<string | null> {
-  const tx = await (conns.erProgram.methods as any)
-    .cancelBet(market.id)
-    .accounts({
-      owner: conns.signerKeypair.publicKey,
-    })
-    .transaction();
+  const apiBase = getKestrelApiBaseUrl(conns);
   try {
-    const sig = await sendErTx(conns, tx, [conns.signerKeypair]);
+    const sig = apiBase
+      ? await cancelBetViaApi({ conns, marketId: market.id })
+      : await (async () => {
+          const tx = await (conns.erProgram.methods as any)
+            .cancelBet(market.id)
+            .accounts({
+              owner: conns.signerKeypair.publicKey,
+            })
+            .transaction();
+          return sendErTx(conns, tx, [conns.signerKeypair]);
+        })();
     log.info({ market: market.id, reason, sig }, "cancel_bet");
     return sig;
   } catch (err: any) {
@@ -159,6 +179,7 @@ async function main(): Promise<void> {
     {
       base: conns.env.baseRpcUrl,
       er: conns.env.erRpcUrl,
+      kestrelApi: conns.env.kestrelApiBaseUrl ?? null,
       owner: conns.signerKeypair.publicKey.toBase58(),
       hedgeSize: HEDGE_SIZE,
       hedgesPerMarket: HEDGES_PER_MARKET,

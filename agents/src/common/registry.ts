@@ -12,6 +12,11 @@ import type { Logger } from "./logger";
 import { defaultPolicyFor } from "./policy";
 import { getValidatorIdentity } from "./connections";
 import { DELEGATION_PROGRAM_ID } from "./markets";
+import {
+  depositViaApi,
+  getKestrelApiBaseUrl,
+  registerAgentViaApi,
+} from "./kestrelApi";
 import { sendErTx } from "./tx";
 
 export const AGENT_SEED = Buffer.from("agent");
@@ -49,17 +54,25 @@ export async function ensureAgent(params: {
   }
 
   const policy = defaultPolicyFor(role);
-  const tx = await (conns.baseProgram.methods as any)
-    .registerAgent(policy)
-    .accounts({ owner })
-    .transaction();
-
-  const sig = await sendAndConfirmTransaction(
-    conns.baseConnection,
-    tx,
-    [conns.signerKeypair],
-    { skipPreflight: true, commitment: "confirmed" },
-  );
+  const apiBase = getKestrelApiBaseUrl(conns);
+  const sig = apiBase
+    ? await registerAgentViaApi({
+        conns,
+        maxStakePerWindow: policy.maxStakePerWindow,
+        maxOpenPositions: policy.maxOpenPositions,
+      })
+    : await (async () => {
+        const tx = await (conns.baseProgram.methods as any)
+          .registerAgent(policy)
+          .accounts({ owner })
+          .transaction();
+        return sendAndConfirmTransaction(
+          conns.baseConnection,
+          tx,
+          [conns.signerKeypair],
+          { skipPreflight: true, commitment: "confirmed" },
+        );
+      })();
   log.info(
     { owner: owner.toBase58(), agent: pda.toBase58(), sig },
     "agent registered",
@@ -180,20 +193,25 @@ export async function ensureErTradingReady(params: {
       );
     }
 
-    const depTx = await (conns.baseProgram.methods as any)
-      .deposit(delta)
-      .accounts({
-        owner,
-        usdcMint,
-        userAta,
-      })
-      .transaction();
-    const sig = await sendAndConfirmTransaction(
-      conns.baseConnection,
-      depTx,
-      [conns.signerKeypair],
-      { skipPreflight: true, commitment: "confirmed" },
-    );
+    const apiBase = getKestrelApiBaseUrl(conns);
+    const sig = apiBase
+      ? await depositViaApi({ conns, amount: delta })
+      : await (async () => {
+          const depTx = await (conns.baseProgram.methods as any)
+            .deposit(delta)
+            .accounts({
+              owner,
+              usdcMint,
+              userAta,
+            })
+            .transaction();
+          return sendAndConfirmTransaction(
+            conns.baseConnection,
+            depTx,
+            [conns.signerKeypair],
+            { skipPreflight: true, commitment: "confirmed" },
+          );
+        })();
     log.info(
       { owner: owner.toBase58(), amount: delta.toString(), sig },
       "deposit",

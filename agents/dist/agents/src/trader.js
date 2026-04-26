@@ -20,6 +20,7 @@ const logger_1 = require("./common/logger");
 const markets_1 = require("./common/markets");
 const oracle_1 = require("./common/oracle");
 const policy_1 = require("./common/policy");
+const kestrelApi_1 = require("./common/kestrelApi");
 const registry_1 = require("./common/registry");
 const tx_1 = require("./common/tx");
 const log = (0, logger_1.buildLogger)("trader");
@@ -31,16 +32,26 @@ const TARGET_BALANCE = Number(process.env.AGENTS_TRADER_TARGET_BALANCE || 200000
 const memos = new Map();
 async function placeBet(params) {
     const { conns, market, side, amount, expectFailure } = params;
-    const sideArg = side === "yes" ? { yes: {} } : { no: {} };
-    const tx = await conns.erProgram.methods
-        .placeBet(market.id, sideArg, amount)
-        .accounts({
-        owner: conns.signerKeypair.publicKey,
-        priceUpdate: market.oracleFeed,
-    })
-        .transaction();
+    const apiBase = (0, kestrelApi_1.getKestrelApiBaseUrl)(conns);
     try {
-        const sig = await (0, tx_1.sendErTx)(conns, tx, [conns.signerKeypair]);
+        const sig = apiBase
+            ? await (0, kestrelApi_1.placeBetViaApi)({
+                conns,
+                marketId: market.id,
+                side,
+                amount,
+            })
+            : await (async () => {
+                const sideArg = side === "yes" ? { yes: {} } : { no: {} };
+                const tx = await conns.erProgram.methods
+                    .placeBet(market.id, sideArg, amount)
+                    .accounts({
+                    owner: conns.signerKeypair.publicKey,
+                    priceUpdate: market.oracleFeed,
+                })
+                    .transaction();
+                return (0, tx_1.sendErTx)(conns, tx, [conns.signerKeypair]);
+            })();
         log.info({
             market: market.id,
             side,
@@ -181,6 +192,7 @@ async function main() {
     log.info({
         base: conns.env.baseRpcUrl,
         er: conns.env.erRpcUrl,
+        kestrelApi: conns.env.kestrelApiBaseUrl ?? null,
         owner: conns.signerKeypair.publicKey.toBase58(),
         baseSize: BASE_SIZE,
     }, "trader boot");

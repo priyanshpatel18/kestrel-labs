@@ -12,6 +12,7 @@ const spl_token_1 = require("@solana/spl-token");
 const policy_1 = require("./policy");
 const connections_1 = require("./connections");
 const markets_1 = require("./markets");
+const kestrelApi_1 = require("./kestrelApi");
 const tx_1 = require("./tx");
 exports.AGENT_SEED = Buffer.from("agent");
 function agentPda(owner, programId) {
@@ -32,11 +33,20 @@ async function ensureAgent(params) {
         return { agentPda: pda, registered: false };
     }
     const policy = (0, policy_1.defaultPolicyFor)(role);
-    const tx = await conns.baseProgram.methods
-        .registerAgent(policy)
-        .accounts({ owner })
-        .transaction();
-    const sig = await (0, web3_js_1.sendAndConfirmTransaction)(conns.baseConnection, tx, [conns.signerKeypair], { skipPreflight: true, commitment: "confirmed" });
+    const apiBase = (0, kestrelApi_1.getKestrelApiBaseUrl)(conns);
+    const sig = apiBase
+        ? await (0, kestrelApi_1.registerAgentViaApi)({
+            conns,
+            maxStakePerWindow: policy.maxStakePerWindow,
+            maxOpenPositions: policy.maxOpenPositions,
+        })
+        : await (async () => {
+            const tx = await conns.baseProgram.methods
+                .registerAgent(policy)
+                .accounts({ owner })
+                .transaction();
+            return (0, web3_js_1.sendAndConfirmTransaction)(conns.baseConnection, tx, [conns.signerKeypair], { skipPreflight: true, commitment: "confirmed" });
+        })();
     log.info({ owner: owner.toBase58(), agent: pda.toBase58(), sig }, "agent registered");
     return { agentPda: pda, registered: true };
 }
@@ -111,15 +121,20 @@ async function ensureErTradingReady(params) {
         if (new anchor_1.BN(ataAcc.amount.toString()).lt(delta)) {
             throw new Error(`Insufficient USDC in ${userAta.toBase58()} to deposit ${delta.toString()} (have ${ataAcc.amount.toString()}). Fund the owner ${owner.toBase58()} with devnet USDC first.`);
         }
-        const depTx = await conns.baseProgram.methods
-            .deposit(delta)
-            .accounts({
-            owner,
-            usdcMint,
-            userAta,
-        })
-            .transaction();
-        const sig = await (0, web3_js_1.sendAndConfirmTransaction)(conns.baseConnection, depTx, [conns.signerKeypair], { skipPreflight: true, commitment: "confirmed" });
+        const apiBase = (0, kestrelApi_1.getKestrelApiBaseUrl)(conns);
+        const sig = apiBase
+            ? await (0, kestrelApi_1.depositViaApi)({ conns, amount: delta })
+            : await (async () => {
+                const depTx = await conns.baseProgram.methods
+                    .deposit(delta)
+                    .accounts({
+                    owner,
+                    usdcMint,
+                    userAta,
+                })
+                    .transaction();
+                return (0, web3_js_1.sendAndConfirmTransaction)(conns.baseConnection, depTx, [conns.signerKeypair], { skipPreflight: true, commitment: "confirmed" });
+            })();
         log.info({ owner: owner.toBase58(), amount: delta.toString(), sig }, "deposit");
     }
     else {

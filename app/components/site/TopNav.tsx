@@ -31,6 +31,12 @@ export function TopNav() {
               </Link>
             </>
           ) : null}
+          <Link
+            href="/docs"
+            className="transition-colors hover:text-foreground"
+          >
+            API
+          </Link>
         </nav>
 
         <div className="ml-auto flex items-center gap-2">

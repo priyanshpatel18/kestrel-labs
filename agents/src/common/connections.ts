@@ -25,6 +25,12 @@ export interface AgentEnv {
   adminKeypair: Keypair;
   supabaseUrl: string | null;
   supabaseServiceRoleKey: string | null;
+  /**
+   * When set (e.g. `http://localhost:3000`), trading helpers use the Next.js
+   * `/api/v1/*` transaction builders instead of Anchor `.methods` for the same
+   * instructions — useful to validate the HTTP API before prod.
+   */
+  kestrelApiBaseUrl: string | null;
 }
 
 export interface AgentConnections {
@@ -95,6 +101,12 @@ export function loadEnv(): AgentEnv {
   const supabaseServiceRoleKey =
     process.env.KESTREL_SUPABASE_SERVICE_ROLE_KEY?.trim() || null;
 
+  const kestrelApiBaseUrlRaw = process.env.KESTREL_API_BASE_URL?.trim();
+  const kestrelApiBaseUrl =
+    kestrelApiBaseUrlRaw && kestrelApiBaseUrlRaw.length > 0
+      ? kestrelApiBaseUrlRaw.replace(/\/+$/, "")
+      : null;
+
   return {
     baseRpcUrl,
     erRpcUrl,
@@ -107,6 +119,7 @@ export function loadEnv(): AgentEnv {
     adminKeypair,
     supabaseUrl,
     supabaseServiceRoleKey,
+    kestrelApiBaseUrl,
   };
 }
 

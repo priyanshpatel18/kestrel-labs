@@ -1,18 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.sendRefreshedTx = sendRefreshedTx;
 exports.sendErTx = sendErTx;
 exports.sendBaseTx = sendBaseTx;
+exports.sendBaseRefreshedTx = sendBaseRefreshedTx;
 exports.isErProgramNotUpgradedYet = isErProgramNotUpgradedYet;
 exports.extractCustomErrorCode = extractCustomErrorCode;
 const web3_js_1 = require("@solana/web3.js");
 /**
- * Send a transaction on the ER, retrying on `block height exceeded` /
- * blockhash expiry. Mirrors `scheduler/src/lifecycle/openClose.ts:sendErTx`.
+ * Send a transaction on any connection, refreshing blockhash each attempt and
+ * retrying on expiry. Used by `sendErTx` and by HTTP API–built transactions.
  */
-async function sendErTx(conns, tx, signers, feePayer) {
+async function sendRefreshedTx(connection, tx, signers, feePayer) {
     const fp = feePayer ?? signers[0];
     if (!fp)
-        throw new Error("sendErTx: no fee payer or signers provided");
+        throw new Error("sendRefreshedTx: no fee payer or signers provided");
     const byPk = new Map();
     byPk.set(fp.publicKey.toBase58(), fp);
     for (const k of signers)
@@ -23,10 +25,10 @@ async function sendErTx(conns, tx, signers, feePayer) {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
             tx.feePayer = fp.publicKey;
-            const { blockhash, lastValidBlockHeight } = await conns.erConnection.getLatestBlockhash("confirmed");
+            const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed");
             tx.recentBlockhash = blockhash;
             tx.lastValidBlockHeight = lastValidBlockHeight;
-            return await (0, web3_js_1.sendAndConfirmTransaction)(conns.erConnection, tx, uniqSigners, { skipPreflight: true, commitment: "confirmed" });
+            return await (0, web3_js_1.sendAndConfirmTransaction)(connection, tx, uniqSigners, { skipPreflight: true, commitment: "confirmed" });
         }
         catch (err) {
             lastErr = err;
@@ -41,11 +43,22 @@ async function sendErTx(conns, tx, signers, feePayer) {
     }
     throw lastErr;
 }
+/**
+ * Send a transaction on the ER, retrying on `block height exceeded` /
+ * blockhash expiry. Mirrors `scheduler/src/lifecycle/openClose.ts:sendErTx`.
+ */
+async function sendErTx(conns, tx, signers, feePayer) {
+    return sendRefreshedTx(conns.erConnection, tx, signers, feePayer);
+}
 async function sendBaseTx(connection, tx, signers) {
     return (0, web3_js_1.sendAndConfirmTransaction)(connection, tx, signers, {
         skipPreflight: true,
         commitment: "confirmed",
     });
+}
+/** Base-layer send with fresh blockhash (matches ER behaviour for API-built txs). */
+async function sendBaseRefreshedTx(connection, tx, signers, feePayer) {
+    return sendRefreshedTx(connection, tx, signers, feePayer);
 }
 /** Compact "did this fail because the program isn't deployed yet?" check. */
 function isErProgramNotUpgradedYet(err) {

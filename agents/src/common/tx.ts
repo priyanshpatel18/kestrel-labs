@@ -8,17 +8,17 @@ import {
 import type { AgentConnections } from "./connections";
 
 /**
- * Send a transaction on the ER, retrying on `block height exceeded` /
- * blockhash expiry. Mirrors `scheduler/src/lifecycle/openClose.ts:sendErTx`.
+ * Send a transaction on any connection, refreshing blockhash each attempt and
+ * retrying on expiry. Used by `sendErTx` and by HTTP API–built transactions.
  */
-export async function sendErTx(
-  conns: AgentConnections,
+export async function sendRefreshedTx(
+  connection: Connection,
   tx: Transaction,
   signers: Keypair[],
   feePayer?: Keypair,
 ): Promise<string> {
   const fp = feePayer ?? signers[0];
-  if (!fp) throw new Error("sendErTx: no fee payer or signers provided");
+  if (!fp) throw new Error("sendRefreshedTx: no fee payer or signers provided");
 
   const byPk = new Map<string, Keypair>();
   byPk.set(fp.publicKey.toBase58(), fp);
@@ -31,11 +31,11 @@ export async function sendErTx(
     try {
       tx.feePayer = fp.publicKey;
       const { blockhash, lastValidBlockHeight } =
-        await conns.erConnection.getLatestBlockhash("confirmed");
+        await connection.getLatestBlockhash("confirmed");
       tx.recentBlockhash = blockhash;
       tx.lastValidBlockHeight = lastValidBlockHeight;
       return await sendAndConfirmTransaction(
-        conns.erConnection,
+        connection,
         tx,
         uniqSigners,
         { skipPreflight: true, commitment: "confirmed" },
@@ -54,6 +54,19 @@ export async function sendErTx(
   throw lastErr;
 }
 
+/**
+ * Send a transaction on the ER, retrying on `block height exceeded` /
+ * blockhash expiry. Mirrors `scheduler/src/lifecycle/openClose.ts:sendErTx`.
+ */
+export async function sendErTx(
+  conns: AgentConnections,
+  tx: Transaction,
+  signers: Keypair[],
+  feePayer?: Keypair,
+): Promise<string> {
+  return sendRefreshedTx(conns.erConnection, tx, signers, feePayer);
+}
+
 export async function sendBaseTx(
   connection: Connection,
   tx: Transaction,
@@ -63,6 +76,16 @@ export async function sendBaseTx(
     skipPreflight: true,
     commitment: "confirmed",
   });
+}
+
+/** Base-layer send with fresh blockhash (matches ER behaviour for API-built txs). */
+export async function sendBaseRefreshedTx(
+  connection: Connection,
+  tx: Transaction,
+  signers: Keypair[],
+  feePayer?: Keypair,
+): Promise<string> {
+  return sendRefreshedTx(connection, tx, signers, feePayer);
 }
 
 /** Compact "did this fail because the program isn't deployed yet?" check. */
