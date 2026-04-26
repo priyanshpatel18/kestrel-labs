@@ -6,6 +6,6 @@ node_modules
 test-ledger
 .yarn
 
-*.md
+AGENTIC*.md
 .env
 dist
