@@ -11,6 +11,7 @@
     "dev:all": "concurrently -n ops,trader,risk -c yellow,cyan,magenta \"pnpm dev:ops\" \"pnpm dev:trader\" \"pnpm dev:risk\"",
     "fund": "ts-node --transpile-only scripts/fund-agents.ts",
     "withdraw": "ts-node --transpile-only scripts/withdraw-demo.ts",
+    "close-expired-markets": "ts-node --transpile-only scripts/close-expired-markets.ts",
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {

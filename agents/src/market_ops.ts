@@ -13,6 +13,12 @@
  *  2. Demo determinism — every Nth market we force a 20s halt regardless of
  *     oracle state so judges always see a `MarketHalted` / `MarketResumed`
  *     pair on the timeline within a few minutes of pressing play.
+ *
+ *  3. Lifecycle safety — after `close_ts`, call `close_market` on any market
+ *     still `open` / `halted` (ER or base). Without this, agents cannot
+ *     `cancel_bet` past the window and slots stay pinned until settlement,
+ *     which surfaces as KestrelError::TooManyPositions (6012) when the
+ *     scheduler is down or behind.
  */
 import { PublicKey } from "@solana/web3.js";
 
@@ -23,12 +29,14 @@ import {
 import { buildLogger } from "./common/logger";
 import {
   MarketView,
+  fetchMarket,
   findActiveOpenMarket,
   findHaltedMarket,
+  marketPda,
 } from "./common/markets";
 import { OracleSnapshot, readOracleSnapshot } from "./common/oracle";
 import { ensureAgent, tagAgentRole } from "./common/registry";
-import { sendErTx } from "./common/tx";
+import { sendBaseRefreshedTx, sendErTx } from "./common/tx";
 
 const log = buildLogger("market_ops");
 
@@ -90,6 +98,61 @@ async function resumeMarket(
   }
 }
 
+async function tryCloseMarketWhenDue(
+  conns: AgentConnections,
+  m: MarketView,
+  nowSec: number,
+): Promise<void> {
+  if (m.status !== "open" && m.status !== "halted") return;
+  if (nowSec < m.closeTs) return;
+
+  const admin = conns.signerKeypair;
+  const program = m.isDelegated ? conns.erProgram : conns.baseProgram;
+  try {
+    const tx = await (program.methods as any)
+      .closeMarket(m.id)
+      .accounts({
+        admin: admin.publicKey,
+        priceUpdate: m.oracleFeed,
+      })
+      .transaction();
+    const sig = m.isDelegated
+      ? await sendErTx(conns, tx, [admin], admin)
+      : await sendBaseRefreshedTx(conns.baseConnection, tx, [admin], admin);
+    log.info({ market: m.id, sig }, "close_market");
+  } catch (err: any) {
+    log.debug(
+      { market: m.id, err: String(err?.message || err).slice(0, 240) },
+      "close_market skipped or failed",
+    );
+  }
+}
+
+/** Ensures settled books can run: `close_market` after `close_ts` for any lagging row. */
+async function closePastWindowMarkets(conns: AgentConnections): Promise<void> {
+  const configPda = PublicKey.findProgramAddressSync(
+    [Buffer.from("config")],
+    conns.programId,
+  )[0];
+  let marketCount = 0;
+  try {
+    const cfg = await (conns.baseProgram as any).account.config.fetch(
+      configPda,
+    );
+    marketCount = Number(cfg.marketCount);
+  } catch {
+    return;
+  }
+  if (!Number.isFinite(marketCount) || marketCount <= 0) return;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  for (let id = 0; id < marketCount; id++) {
+    const m = await fetchMarket(conns, marketPda(id, conns.programId), log);
+    if (!m) continue;
+    await tryCloseMarketWhenDue(conns, m, nowSec);
+  }
+}
+
 async function tickStaleness(
   conns: AgentConnections,
   feed: PublicKey,
@@ -104,6 +167,8 @@ async function tickStaleness(
 }
 
 async function tick(conns: AgentConnections): Promise<void> {
+  await closePastWindowMarkets(conns);
+
   const open = await findActiveOpenMarket(conns, log);
   const haltedView = await findHaltedMarket(conns, log);
   const live = open ?? haltedView;

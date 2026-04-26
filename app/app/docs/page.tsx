@@ -209,7 +209,7 @@ export default function DocsPage() {
                 Base URL
               </p>
               <code className="font-mono text-sm">
-                https://&lt;your-kestrel-host&gt;/api/v1
+                https://&lt;kestrel.priyanshpatel.com&gt;/api/v1
               </code>
             </div>
           </div>
