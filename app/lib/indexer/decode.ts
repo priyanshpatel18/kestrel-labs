@@ -2,7 +2,7 @@ import { BorshEventCoder, BorshInstructionCoder, BN, Idl } from "@coral-xyz/anch
 import { PublicKey } from "@solana/web3.js";
 import bs58 from "bs58";
 
-import idlJson from "../../../target/idl/kestrel.json";
+import idlJson from "../idl/kestrel.json";
 
 export const KESTREL_IDL = idlJson as unknown as Idl;
 export const KESTREL_PROGRAM_ID = new PublicKey(

@@ -68,7 +68,13 @@ export function buildProgram(target: ChainTarget = "base"): ProgramBundle {
     commitment: "confirmed",
     skipPreflight: false,
   });
-  const program = new Program(KESTREL_IDL, provider) as Program<Idl>;
+  // IDL checked into `app/lib/idl` may carry a different `address` than devnet;
+  // always align Program with `KESTREL_PROGRAM_ID` when set (see `loadApiEnv`).
+  const idl = {
+    ...(KESTREL_IDL as object),
+    address: env.programId.toBase58(),
+  } as Idl;
+  const program = new Program(idl, provider) as Program<Idl>;
   return { program, connection, env };
 }
 

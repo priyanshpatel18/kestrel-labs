@@ -117,10 +117,10 @@ Constants worth citing in client code: `ORACLE_MAX_AGE_SECS`, `MIN_SEED_LIQUIDIT
 ### IDL and shared program id
 
 - `anchor build` emits **`target/idl/kestrel.json`**.
-- The **Next.js** app imports that IDL from [`app/lib/indexer/decode.ts`](./app/lib/indexer/decode.ts) (and related API tx builders).
-- **Agents** import the same JSON via [`agents/src/common/connections.ts`](./agents/src/common/connections.ts).
+- The **Next.js** app loads a **copy** at **`app/lib/idl/kestrel.json`** (imported from `app/lib/indexer/decode.ts`). After `anchor build`, run **`pnpm sync-idl`** from the repo root and commit the updated JSON so Vercel and CI can build without a Rust toolchain.
+- **Agents** and the **scheduler** still read **`target/idl/kestrel.json`** from the repo root (local dev).
 
-After upgrading the program, rebuild and **restart** any long-lived Node process that bundles the IDL so account metas and discriminators stay in sync.
+After upgrading the program, run `anchor build`, then **`pnpm sync-idl`**, commit `app/lib/idl/kestrel.json`, and restart any long-lived Node process that bundles the IDL.
 
 ### Off-chain components
 
@@ -151,8 +151,37 @@ pnpm install
 anchor build
 ```
 
-**Typical live demo (five processes):** (1) `cd scheduler && pnpm dev` — horizon, delegate, open/close. (2) `cd app && KESTREL_INDEXER_ENABLED=true pnpm dev` — UI plus optional indexer to Supabase (apply SQL migrations under `app/supabase/migrations/` first if you use it). (3) `cd agents && pnpm dev:all` — MarketOps, Trader, Risk-LP. Copy env from `app/.env.example`, `agents/.env.example`, and `scheduler/.env.example`; fund devnet SOL/USDC for the admin and agent keypairs; optional `pnpm --filter @kestrel/agents fund`. Withdraw after settle uses `commit_and_undelegate_agent` then `withdraw` on base (see `agents/scripts/withdraw-demo.ts` or the app’s `/api/v1/agent/withdraw` builder).
+### Typical live demo (five processes)
+
+You run **five OS processes**: one **scheduler**, one **Next.js** server, and **three** agent roles (MarketOps, Trader, Risk-LP). The repo usually uses **three terminals**: scheduler, app, and `pnpm dev:all` in `agents/` (which starts the three agents via `concurrently`).
+
+Copy env from `app/.env.example`, `agents/.env.example`, and `scheduler/.env.example`. Fund devnet SOL and USDC for the scheduler admin and for each agent keypair. Optional airdrop / top-up helper:
+
+```bash
+pnpm --filter @kestrel/agents fund
+# optional: pnpm --filter @kestrel/agents fund -- --apply
+```
+
+**Scheduler** — rolling horizon, `create_market` / `delegate_market`, ER open and close:
+
+```bash
+cd scheduler && pnpm dev
+```
+
+**App + optional indexer** — UI and, when `KESTREL_INDEXER_ENABLED=true`, indexer writes to Supabase. Apply SQL under `app/supabase/migrations/` in order before relying on traces or stats.
+
+```bash
+cd app && KESTREL_INDEXER_ENABLED=true pnpm dev
+```
+
+**Agents** — MarketOps, Trader, and Risk-LP (one command, three processes):
+
+```bash
+cd agents && pnpm dev:all
+```
+
+**Withdraw (after settle)** — On ER, `commit_and_undelegate_agent` if still delegated; then `withdraw` on base. Use `agents/scripts/withdraw-demo.ts` or build via `POST /api/v1/agent/withdraw` on the app.
 
 ## License
 
-[LICENSE](LICENSE)
+ISC — see the root `package.json` `license` field and the `LICENSE` file in the repository root.
