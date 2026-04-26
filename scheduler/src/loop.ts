@@ -70,6 +70,11 @@ interface SchedulerRuntimeState {
 const AGENT_DELEGATE_INTERVAL_MS = 30_000;
 /** Max create+delegate pairs per tick so one slow tick cannot starve ER work forever. */
 const MAX_HORIZON_CREATE_DELEGATE_PER_TICK = 8;
+/**
+ * ER open/close passes per tick — re-scan with a fresh clock after awaits so window
+ * boundaries are not missed while `state.ticking` blocks the interval callback.
+ */
+const MAX_ER_OPEN_CLOSE_PASSES_PER_TICK = 24;
 
 export async function startScheduler(
   conns: KestrelConnections,
@@ -172,6 +177,53 @@ async function refreshOneMarket(
   if (snap) state.markets.set(id, snap);
 }
 
+/**
+ * Dispatch all eligible ER `open_market` / `close_market` txs for the current cache,
+ * using a **fresh** wall clock (not the tick's frozen snapshot).
+ */
+async function runErOpenClosePass(
+  conns: KestrelConnections,
+  cfg: SchedulerConfig,
+  state: SchedulerRuntimeState,
+  log: SchedulerLogger,
+): Promise<number> {
+  const nowMs = Date.now();
+  const nowSecs = Math.floor(nowMs / 1000);
+  const erPhase: Promise<void>[] = [];
+  for (const market of state.markets.values()) {
+    const per = getOrInitPerMarket(state, market.id);
+    if (per.doneAt !== null) continue;
+
+    if (
+      market.status === "pending" &&
+      market.isDelegated &&
+      nowSecs >= market.openTs + cfg.onchainWindowBufferSecs &&
+      !per.inFlight.has("open") &&
+      nowMs - per.lastOpenAttemptMs > cfg.openCloseCooldownMs
+    ) {
+      per.inFlight.add("open");
+      per.lastOpenAttemptMs = nowMs;
+      erPhase.push(handleOpen(conns, cfg, state, log, market));
+      continue;
+    }
+
+    if (
+      (market.status === "open" || market.status === "halted") &&
+      market.isDelegated &&
+      nowSecs >= market.closeTs + cfg.onchainWindowBufferSecs &&
+      !per.inFlight.has("close") &&
+      nowMs - per.lastCloseAttemptMs > cfg.openCloseCooldownMs
+    ) {
+      per.inFlight.add("close");
+      per.lastCloseAttemptMs = nowMs;
+      erPhase.push(handleClose(conns, cfg, state, log, market));
+    }
+  }
+  if (erPhase.length === 0) return 0;
+  await Promise.allSettled(erPhase);
+  return erPhase.length;
+}
+
 async function tick(
   conns: KestrelConnections,
   cfg: SchedulerConfig,
@@ -181,10 +233,9 @@ async function tick(
   if (state.ticking) return;
   state.ticking = true;
   try {
-    const nowMs = Date.now();
-    const nowSecs = Math.floor(nowMs / 1000);
+    const tickStartMs = Date.now();
 
-    if (nowMs - state.lastFullRefreshMs > cfg.marketListRefreshMs) {
+    if (tickStartMs - state.lastFullRefreshMs > cfg.marketListRefreshMs) {
       await refreshMarkets(conns, state, log).catch((err) => {
         log.warn(
           { err: String(err?.message || err) },
@@ -193,38 +244,12 @@ async function tick(
       });
     }
 
-    // Phase 1 — ER: all eligible open_market + close_market in parallel (per-market).
-    const erPhase: Promise<void>[] = [];
-    for (const market of state.markets.values()) {
-      const per = getOrInitPerMarket(state, market.id);
-      if (per.doneAt !== null) continue;
-
-      if (
-        market.status === "pending" &&
-        market.isDelegated &&
-        nowSecs >= market.openTs + cfg.onchainWindowBufferSecs &&
-        !per.inFlight.has("open") &&
-        nowMs - per.lastOpenAttemptMs > cfg.openCloseCooldownMs
-      ) {
-        per.inFlight.add("open");
-        per.lastOpenAttemptMs = nowMs;
-        erPhase.push(handleOpen(conns, cfg, state, log, market));
-        continue;
-      }
-
-      if (
-        (market.status === "open" || market.status === "halted") &&
-        market.isDelegated &&
-        nowSecs >= market.closeTs + cfg.onchainWindowBufferSecs &&
-        !per.inFlight.has("close") &&
-        nowMs - per.lastCloseAttemptMs > cfg.openCloseCooldownMs
-      ) {
-        per.inFlight.add("close");
-        per.lastCloseAttemptMs = nowMs;
-        erPhase.push(handleClose(conns, cfg, state, log, market));
-      }
+    // Phase 1 — ER: re-scan with fresh clock after each parallel batch so we never sit
+    // through long horizon RPCs across open_ts/close_ts without dispatching.
+    for (let p = 0; p < MAX_ER_OPEN_CLOSE_PASSES_PER_TICK; p++) {
+      const n = await runErOpenClosePass(conns, cfg, state, log);
+      if (n === 0) break;
     }
-    await Promise.allSettled(erPhase);
 
     // Phase 2 — base: create_market then delegate_market (ordered per market id); may run multiple pairs per tick up to cap.
     for (let h = 0; h < MAX_HORIZON_CREATE_DELEGATE_PER_TICK; h++) {
@@ -236,9 +261,16 @@ async function tick(
           "tick: post-create market refresh failed",
         );
       });
+      await runErOpenClosePass(conns, cfg, state, log);
+    }
+
+    for (let p = 0; p < MAX_ER_OPEN_CLOSE_PASSES_PER_TICK; p++) {
+      const n = await runErOpenClosePass(conns, cfg, state, log);
+      if (n === 0) break;
     }
 
     // Phase 3 — ER: settle_positions batched + commit_and_undelegate_market per market, all markets in parallel.
+    const settleNow = Date.now();
     const settlePhase: Promise<void>[] = [];
     for (const market of state.markets.values()) {
       const per = getOrInitPerMarket(state, market.id);
@@ -248,22 +280,23 @@ async function tick(
         market.status === "closed" &&
         market.isDelegated &&
         !per.inFlight.has("settle") &&
-        nowMs - per.lastSettleAttemptMs > cfg.settleCooldownMs
+        settleNow - per.lastSettleAttemptMs > cfg.settleCooldownMs
       ) {
         per.inFlight.add("settle");
-        per.lastSettleAttemptMs = nowMs;
+        per.lastSettleAttemptMs = settleNow;
         settlePhase.push(handleSettle(conns, cfg, state, log, market));
         continue;
       }
 
       if (market.status === "closed" && !market.isDelegated) {
-        per.doneAt = nowMs;
+        per.doneAt = settleNow;
       }
     }
     await Promise.allSettled(settlePhase);
 
-    if (nowMs - state.lastAgentDelegateMs > AGENT_DELEGATE_INTERVAL_MS) {
-      state.lastAgentDelegateMs = nowMs;
+    const tailNow = Date.now();
+    if (tailNow - state.lastAgentDelegateMs > AGENT_DELEGATE_INTERVAL_MS) {
+      state.lastAgentDelegateMs = tailNow;
       void delegateUndelegatedAgentsOnce({
         conns,
         cfg,
