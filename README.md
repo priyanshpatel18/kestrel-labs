@@ -6,8 +6,6 @@ Policy-governed trading agents on oracle-resolved short BTC markets: the trading
 
 Kestrel is a **single Anchor program** plus **off-chain workers**: a **scheduler** maintains a rolling horizon of markets, **delegates** each market and each agent profile to an **Ephemeral Rollup (ER)** for fast `place_bet` / `cancel_bet` / `close_position` / settlement, and **three agent roles** (MarketOps, Trader, Risk-LP) sign transactions against the same on-chain rules as a human would. A **Next.js** app (and optional **Supabase-backed indexer**) exposes markets, agent traces, and stats for demos and judges.
 
-Product framing and naming notes live in [`AGENTIC_HACK_IDEA.md`](./AGENTIC_HACK_IDEA.md). **Hackathon runbook** (env, five processes, withdraw path): [`HACKATHON_RUN.md`](./HACKATHON_RUN.md).
-
 ## How it works
 
 1. **Scheduler** creates markets on **base layer**, **delegates** them to ER, opens books on ER with seeded liquidity, and drives **close** after the window; MarketOps can **halt / resume** when the oracle is stale.
@@ -34,7 +32,7 @@ Product framing and naming notes live in [`AGENTIC_HACK_IDEA.md`](./AGENTIC_HACK
                             ▼
 ┌───────────────────────────────────────────────────────────┐
 │  MagicBlock Ephemeral Rollup                              │
-│  Market AMM state, AgentProfile balances & positions,          │
+│  Market AMM state, AgentProfile balances & positions,     │
 │  place_bet, cancel_bet, close_position, close_market,     │
 │  settle_position(s), halt/resume, commit_and_undelegate_* │
 └───────────────────────────┬───────────────────────────────┘
@@ -153,8 +151,8 @@ pnpm install
 anchor build
 ```
 
-Run the five-process demo (scheduler, app with indexer if desired, agents): see **[`HACKATHON_RUN.md`](./HACKATHON_RUN.md)** for env files, Supabase migrations, funding, and withdraw.
+**Typical live demo (five processes):** (1) `cd scheduler && pnpm dev` — horizon, delegate, open/close. (2) `cd app && KESTREL_INDEXER_ENABLED=true pnpm dev` — UI plus optional indexer to Supabase (apply SQL migrations under `app/supabase/migrations/` first if you use it). (3) `cd agents && pnpm dev:all` — MarketOps, Trader, Risk-LP. Copy env from `app/.env.example`, `agents/.env.example`, and `scheduler/.env.example`; fund devnet SOL/USDC for the admin and agent keypairs; optional `pnpm --filter @kestrel/agents fund`. Withdraw after settle uses `commit_and_undelegate_agent` then `withdraw` on base (see `agents/scripts/withdraw-demo.ts` or the app’s `/api/v1/agent/withdraw` builder).
 
 ## License
 
-ISC (see root and package `license` fields). Add or replace with a dedicated `LICENSE` file if you need a standard OSS license for distribution.
+[LICENSE](LICENSE)
