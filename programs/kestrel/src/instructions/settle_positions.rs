@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 
 use crate::constants::{AGENT_SEED, MARKET_SEED};
 use crate::error::KestrelError;
+use crate::events::AgentSettled;
 use crate::state::{AgentProfile, Market, MarketStatus, Outcome};
 
 #[derive(Accounts)]
@@ -30,6 +31,8 @@ pub fn handler<'info>(
         .checked_add(market.total_collateral as u128)
         .ok_or(KestrelError::MathOverflow)?;
 
+    let chain_slot = Clock::get()?.slot;
+
     for ai in ctx.remaining_accounts.iter() {
         require!(ai.is_writable, KestrelError::Unauthorized);
         require_keys_eq!(*ai.owner, crate::ID, KestrelError::Unauthorized);
@@ -39,11 +42,11 @@ pub fn handler<'info>(
             Pubkey::find_program_address(&[AGENT_SEED, agent.owner.as_ref()], &crate::ID);
         require_keys_eq!(expected, agent.key(), KestrelError::Unauthorized);
 
-        let slot = match agent.find_position(market_id) {
+        let pos_slot = match agent.find_position(market_id) {
             Some(s) => s,
             None => continue,
         };
-        let pos = &mut agent.positions[slot];
+        let pos = &mut agent.positions[pos_slot];
         if pos.settled {
             continue;
         }
@@ -61,7 +64,17 @@ pub fn handler<'info>(
             .checked_add(payout)
             .ok_or(KestrelError::MathOverflow)?;
 
+        let owner = agent.owner;
+
         agent.exit(&crate::ID)?;
+
+        emit!(AgentSettled {
+            owner,
+            market_id,
+            side_won: winner,
+            payout,
+            slot: chain_slot,
+        });
     }
 
     Ok(())

@@ -2,6 +2,7 @@
 
 pub mod constants;
 pub mod error;
+pub mod events;
 pub mod instructions;
 pub mod state;
 
@@ -10,10 +11,11 @@ use ephemeral_rollups_sdk::anchor::ephemeral;
 
 pub use constants::*;
 pub use error::*;
+pub use events::*;
 pub use instructions::*;
 pub use state::*;
 
-declare_id!("ELJUMkFGjCAyLu7YWsYN9k8nk3GMtDG1P6BYqBtzVFvd");
+declare_id!("EtgAJDZ5ZpAwwhbob9X47ABnhASWLSgVm4pjMKo5mksM");
 
 #[ephemeral]
 #[program]
@@ -38,6 +40,10 @@ pub mod kestrel {
 
     pub fn register_agent(ctx: Context<RegisterAgent>, policy: AgentPolicy) -> Result<()> {
         instructions::register_agent::handler(ctx, policy)
+    }
+
+    pub fn update_policy(ctx: Context<UpdatePolicy>, new_policy: AgentPolicy) -> Result<()> {
+        instructions::update_policy::handler(ctx, new_policy)
     }
 
     pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {

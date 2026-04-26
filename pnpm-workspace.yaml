@@ -1,6 +1,7 @@
 packages:
   - app
   - scheduler
+  - agents
 
 onlyBuiltDependencies:
   - bigint-buffer

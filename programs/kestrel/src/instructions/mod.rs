@@ -18,6 +18,7 @@ pub mod place_bet;
 pub mod register_agent;
 pub mod settle_position;
 pub mod settle_positions;
+pub mod update_policy;
 pub mod withdraw;
 
 pub use close_market::*;
@@ -38,4 +39,5 @@ pub use place_bet::*;
 pub use register_agent::*;
 pub use settle_position::*;
 pub use settle_positions::*;
+pub use update_policy::*;
 pub use withdraw::*;

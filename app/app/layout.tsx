@@ -1,5 +1,6 @@
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { SiteFooter } from "@/components/site/SiteFooter";
+import { SystemStatusStrip } from "@/components/site/SystemStatusStrip";
 import { TopNav } from "@/components/site/TopNav";
 import { siteConfig } from "@/config/siteConfig";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,7 @@ export default function RootLayout({
         <ThemeProvider>
           <div className="flex min-h-dvh flex-col">
             <TopNav />
+            {/* <SystemStatusStrip /> */}
             <main className="flex flex-1 flex-col">{children}</main>
             <SiteFooter />
           </div>

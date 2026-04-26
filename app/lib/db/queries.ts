@@ -1,7 +1,12 @@
 import "server-only";
 
 import { getReadSupabase } from "../supabase/server";
-import type { EventRow, MarketCloseOutcome, MarketRow } from "../types";
+import type {
+  AgentRow,
+  EventRow,
+  MarketCloseOutcome,
+  MarketRow,
+} from "../types";
 
 export async function fetchAllMarkets(opts?: {
   status?: string;
@@ -56,6 +61,45 @@ export async function fetchRecentEvents(limit = 50): Promise<EventRow[]> {
     .limit(limit);
   if (error) throw error;
   return (data ?? []) as EventRow[];
+}
+
+export async function fetchAgentEvents(
+  ownerPubkey: string,
+  limit = 200,
+): Promise<EventRow[]> {
+  const sb = getReadSupabase();
+  const { data, error } = await sb
+    .from("events")
+    .select("*")
+    .eq("actor", ownerPubkey)
+    .order("inserted_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  // Newest-first from the query, oldest-first for the timeline UI.
+  return ((data ?? []) as EventRow[]).reverse();
+}
+
+export async function fetchAgentRow(
+  ownerPubkey: string,
+): Promise<AgentRow | null> {
+  const sb = getReadSupabase();
+  const { data, error } = await sb
+    .from("agents")
+    .select("*")
+    .eq("owner_pubkey", ownerPubkey)
+    .maybeSingle();
+  if (error) throw error;
+  return (data ?? null) as AgentRow | null;
+}
+
+export async function fetchAllAgents(): Promise<AgentRow[]> {
+  const sb = getReadSupabase();
+  const { data, error } = await sb
+    .from("agents")
+    .select("*")
+    .order("last_event_at", { ascending: false, nullsFirst: false });
+  if (error) throw error;
+  return (data ?? []) as AgentRow[];
 }
 
 export interface DashboardSnapshot {

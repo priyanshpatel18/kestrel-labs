@@ -1,0 +1,32 @@
+{
+  "name": "@kestrel/agents",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Three role-based agent runtimes (MarketOps, Trader, Risk-LP/Hedger) that drive bounded-autonomy behaviour against the Kestrel program on Solana base + MagicBlock ER",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev:ops": "ts-node --transpile-only src/market_ops.ts",
+    "dev:trader": "ts-node --transpile-only src/trader.ts",
+    "dev:risk": "ts-node --transpile-only src/risk_lp.ts",
+    "dev:all": "concurrently -n ops,trader,risk -c yellow,cyan,magenta \"pnpm dev:ops\" \"pnpm dev:trader\" \"pnpm dev:risk\"",
+    "fund": "ts-node --transpile-only scripts/fund-agents.ts",
+    "prebuild": "node ../scripts/ensure-idl.mjs",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@coral-xyz/anchor": "^0.32.1",
+    "@magicblock-labs/ephemeral-rollups-sdk": "^0.6.5",
+    "@solana/spl-token": "^0.4.13",
+    "@solana/web3.js": "^1.98.4",
+    "@supabase/supabase-js": "^2.49.1",
+    "concurrently": "^9.0.0",
+    "dotenv": "^16.4.5",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}

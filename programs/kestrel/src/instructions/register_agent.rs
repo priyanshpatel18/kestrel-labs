@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 
 use crate::constants::AGENT_SEED;
+use crate::events::AgentRegistered;
 use crate::state::{AgentPolicy, AgentProfile, AgentStatus, OpenPosition};
 
 #[derive(Accounts)]
@@ -32,5 +33,14 @@ pub fn handler(ctx: Context<RegisterAgent>, policy: AgentPolicy) -> Result<()> {
     agent.positions_len = 0;
     agent.bump = ctx.bumps.agent;
     msg!("Agent registered: owner={}", agent.owner);
+
+    let slot = Clock::get()?.slot;
+    emit!(AgentRegistered {
+        owner: agent.owner,
+        agent: agent.key(),
+        policy,
+        slot,
+    });
+
     Ok(())
 }

@@ -10,7 +10,7 @@ skip-lint = false
 kestrel = "ELJUMkFGjCAyLu7YWsYN9k8nk3GMtDG1P6BYqBtzVFvd"
 
 [programs.localnet]
-kestrel = "ELJUMkFGjCAyLu7YWsYN9k8nk3GMtDG1P6BYqBtzVFvd"
+kestrel = "EtgAJDZ5ZpAwwhbob9X47ABnhASWLSgVm4pjMKo5mksM"
 
 [registry]
 url = "https://api.apr.dev"

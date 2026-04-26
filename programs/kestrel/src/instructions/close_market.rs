@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 
 use crate::constants::{CONFIG_SEED, MARKET_SEED};
 use crate::error::KestrelError;
+use crate::events::MarketClosed;
 use crate::state::{read_oracle_price, Config, Market, MarketStatus, Outcome};
 
 #[derive(Accounts)]
@@ -51,12 +52,23 @@ pub fn handler(ctx: Context<CloseMarket>, _id: u32) -> Result<()> {
     market.winner = Some(winner);
     market.status = MarketStatus::Closed;
 
+    let market_id = market.id;
+    let strike = market.strike;
     msg!(
         "Market {} closed: strike={} close={} winner={:?}",
-        market.id,
-        market.strike,
+        market_id,
+        strike,
         close_price,
         winner
     );
+
+    emit!(MarketClosed {
+        market_id,
+        strike,
+        close_price,
+        winner,
+        slot: clock.slot,
+    });
+
     Ok(())
 }

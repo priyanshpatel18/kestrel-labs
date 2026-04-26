@@ -8,15 +8,23 @@ import {
   clusterConnection,
   clusterProgram,
 } from "./connections";
-import { DecodedKestrelIx, decodeKestrelIx } from "./decode";
+import {
+  DecodedKestrelEvent,
+  DecodedKestrelIx,
+  decodeKestrelEvents,
+  decodeKestrelIx,
+} from "./decode";
 import { buildDecisionCard } from "./enrich";
+import { decodeKestrelErrorFromString } from "./errorMap";
 import { log } from "./log";
 
 const MARKET_SEED = Buffer.from("market");
+const AGENT_SEED = Buffer.from("agent");
 
 interface EventRow {
   signature: string;
   ix_index: number;
+  event_seq: number;
   cluster: Cluster;
   slot: number | null;
   block_time: string | null;
@@ -29,6 +37,15 @@ interface EventRow {
   success: boolean;
   err: string | null;
   decision: Record<string, unknown> | null;
+}
+
+interface AgentPatch {
+  owner_pubkey: string;
+  agent_pda?: string;
+  current_policy?: Record<string, unknown> | null;
+  current_balance?: number | null;
+  registered_at?: string | null;
+  last_event_at?: string | null;
 }
 
 interface MarketSigPatch {
@@ -45,6 +62,38 @@ function marketPda(programId: PublicKey, marketId: number): PublicKey {
     programId,
   );
   return pda;
+}
+
+function agentPda(programId: PublicKey, owner: PublicKey): PublicKey {
+  const [pda] = PublicKey.findProgramAddressSync(
+    [AGENT_SEED, owner.toBuffer()],
+    programId,
+  );
+  return pda;
+}
+
+/** Pull a `Pubkey` field out of a decoded Anchor event payload. */
+function eventPubkey(data: Record<string, unknown>, key: string): string | null {
+  const v = data[key];
+  if (typeof v === "string") return v;
+  if (v && typeof v === "object" && typeof (v as { toBase58?: () => string }).toBase58 === "function") {
+    try {
+      return (v as { toBase58: () => string }).toBase58();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function eventNumber(data: Record<string, unknown>, key: string): number | null {
+  const v = data[key];
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
 }
 
 function extractMarketId(decoded: DecodedKestrelIx): number | null {
@@ -221,7 +270,10 @@ async function insertEvents(rows: EventRow[]): Promise<void> {
   const sb = getServiceSupabase();
   const { error } = await sb
     .from("events")
-    .upsert(rows, { onConflict: "signature,ix_index", ignoreDuplicates: true });
+    .upsert(rows, {
+      onConflict: "signature,ix_index,event_seq",
+      ignoreDuplicates: true,
+    });
   if (error) {
     const msg = String(error.message || error);
     log.warn("events upsert failed", {
@@ -229,6 +281,78 @@ async function insertEvents(rows: EventRow[]): Promise<void> {
       sample: rows[0]?.signature,
     });
   }
+}
+
+async function applyAgentPatches(patches: AgentPatch[]): Promise<void> {
+  if (patches.length === 0) return;
+  const sb = getServiceSupabase();
+  const merged = new Map<string, AgentPatch>();
+  for (const p of patches) {
+    const cur = merged.get(p.owner_pubkey);
+    if (!cur) {
+      merged.set(p.owner_pubkey, { ...p });
+    } else {
+      // Later events win for time-varying fields; first-seen wins for
+      // identity fields like agent_pda / registered_at.
+      merged.set(p.owner_pubkey, {
+        owner_pubkey: p.owner_pubkey,
+        agent_pda: cur.agent_pda ?? p.agent_pda,
+        registered_at: cur.registered_at ?? p.registered_at,
+        current_policy:
+          p.current_policy !== undefined ? p.current_policy : cur.current_policy,
+        current_balance:
+          p.current_balance !== undefined
+            ? p.current_balance
+            : cur.current_balance,
+        last_event_at:
+          (p.last_event_at && cur.last_event_at && p.last_event_at > cur.last_event_at)
+            ? p.last_event_at
+            : (p.last_event_at ?? cur.last_event_at),
+      });
+    }
+  }
+  const rows = Array.from(merged.values()).map((m) => ({
+    ...m,
+    updated_at: new Date().toISOString(),
+  }));
+  const { error } = await sb
+    .from("agents")
+    .upsert(rows, { onConflict: "owner_pubkey" });
+  if (error) {
+    const msg = String(error.message || error);
+    log.warn("agents upsert failed", {
+      error: msg.length > 500 ? `${msg.slice(0, 500)}…` : msg,
+      sample: rows[0]?.owner_pubkey,
+    });
+  }
+}
+
+/** Convert an Anchor `AgentPolicy` into the snake-case shape the UI expects. */
+function policyToSnake(p: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  if (!p) return null;
+  const root = p.allowedMarketsRoot ?? p.allowed_markets_root;
+  let rootHex: string | null = null;
+  if (Array.isArray(root)) {
+    rootHex = `0x${Buffer.from(root as number[]).toString("hex")}`;
+  } else if (typeof root === "string") {
+    rootHex = root.startsWith("0x") ? root : `0x${root}`;
+  }
+  return {
+    max_stake_per_window:
+      p.maxStakePerWindow !== undefined
+        ? String(p.maxStakePerWindow)
+        : p.max_stake_per_window !== undefined
+          ? String(p.max_stake_per_window)
+          : null,
+    max_open_positions:
+      typeof p.maxOpenPositions === "number"
+        ? p.maxOpenPositions
+        : typeof p.max_open_positions === "number"
+          ? p.max_open_positions
+          : null,
+    allowed_markets_root_hex: rootHex,
+    paused: typeof p.paused === "boolean" ? p.paused : null,
+  };
 }
 
 export interface IngestStats {
@@ -332,32 +456,40 @@ export async function ingestSignature(
     return { decoded: 0, written: 0, skipped: 0 };
   }
 
-  // First pass: ensure parent market rows exist for the FK.
+  // Pre-decode every Anchor `#[event]` payload so we can interleave them with
+  // the ix rows (and key the per-agent feed off them).
+  const anchorEvents = decodeKestrelEvents(tx.meta?.logMessages ?? []);
+
   const marketPatches: MarketSigPatch[] = [];
   const seenMarkets = new Set<string>();
   const eventRows: EventRow[] = [];
+  const agentPatches: AgentPatch[] = [];
+  const eventTime = blockTime ?? new Date().toISOString();
+  // Tracks how many events_seq slots we've used per (signature, ix_index).
+  const seqByIx = new Map<number, number>();
+  const nextSeq = (ix: number): number => {
+    const cur = seqByIx.get(ix) ?? 0;
+    seqByIx.set(ix, cur + 1);
+    return cur;
+  };
+
+  // Errors caused by a require!/check inside `place_bet` ship as Anchor
+  // custom errors; map them to a canonical name for the synthetic Blocked row.
+  const errorInfo = success ? null : decodeKestrelErrorFromString(errStr);
 
   for (const { decoded, ixIndex } of candidates) {
     const marketId = extractMarketId(decoded);
     let marketPubkey: string | null = null;
     if (marketId !== null) {
       marketPubkey = marketPda(conns.programId, marketId).toBase58();
-      // Always seed the markets row so the FK in events is satisfied.
       if (!seenMarkets.has(marketPubkey)) {
         seenMarkets.add(marketPubkey);
-        marketPatches.push({
-          market_pubkey: marketPubkey,
-          market_id: marketId,
-          patch: buildMarketPatch(signature, blockTime, decoded),
-        });
-      } else {
-        // merge later patches into the same pubkey
-        marketPatches.push({
-          market_pubkey: marketPubkey,
-          market_id: marketId,
-          patch: buildMarketPatch(signature, blockTime, decoded),
-        });
       }
+      marketPatches.push({
+        market_pubkey: marketPubkey,
+        market_id: marketId,
+        patch: buildMarketPatch(signature, blockTime, decoded),
+      });
     }
 
     const actor =
@@ -374,9 +506,6 @@ export async function ingestSignature(
       err: errStr,
     });
 
-    // Persist the oracle-derived strike (\"target price\") at open time.
-    // The program writes it into `Market.strike`; we read the account and
-    // store it into `markets.strike_price` for fast UI queries.
     let strikePricePatch: Record<string, unknown> | null = null;
     if (decoded.name === "open_market" && marketPubkey) {
       const strike = await fetchMarketStrikePrice({
@@ -387,7 +516,6 @@ export async function ingestSignature(
       if (strike !== null) strikePricePatch = { strike_price: strike };
     }
 
-    // Persist the oracle close price at close time (for showing final price).
     let closePricePatch: Record<string, unknown> | null = null;
     if (decoded.name === "close_market" && marketPubkey) {
       const closePrice = await fetchMarketClosePrice({
@@ -398,9 +526,13 @@ export async function ingestSignature(
       if (closePrice !== null) closePricePatch = { close_price: closePrice };
     }
 
+    // Row 0: the raw decoded instruction (kept for back-compat with existing
+    // dashboards and queries).
+    const baseSeq = nextSeq(ixIndex);
     eventRows.push({
       signature,
       ix_index: ixIndex,
+      event_seq: baseSeq,
       cluster,
       slot,
       block_time: blockTime,
@@ -414,6 +546,94 @@ export async function ingestSignature(
       err: errStr,
       decision,
     });
+
+    // Synthetic rows: every place_bet — successful or failed — emits a
+    // PlaceBetAttempted card so judges always see the four-column trace, and
+    // a PlaceBetBlocked card piggy-backs on the same signature when the bet
+    // actually got rejected on-chain.
+    if (decoded.name === "place_bet") {
+      const intentSide =
+        decoded.args.side !== undefined ? String(decoded.args.side) : null;
+      const intentAmount =
+        decoded.args.amount !== undefined ? String(decoded.args.amount) : null;
+      const baseDecision = decision ?? {};
+      const attemptedDecision: Record<string, unknown> = {
+        ...baseDecision,
+        kind: "PlaceBetAttempted",
+        intent: { side: intentSide, amount: intentAmount },
+        accepted: success,
+      };
+      eventRows.push({
+        signature,
+        ix_index: ixIndex,
+        event_seq: nextSeq(ixIndex),
+        cluster,
+        slot,
+        block_time: blockTime,
+        market_pubkey: marketPubkey,
+        market_id: marketId,
+        kind: "PlaceBetAttempted",
+        actor,
+        args: decoded.args,
+        accounts: decoded.accounts,
+        success,
+        err: errStr,
+        decision: attemptedDecision,
+      });
+
+      if (!success) {
+        const blockedDecision: Record<string, unknown> = {
+          ...baseDecision,
+          kind: "PlaceBetBlocked",
+          intent: { side: intentSide, amount: intentAmount },
+          accepted: false,
+          reason: errorInfo?.name ?? errStr ?? "unknown",
+          reason_code: errorInfo?.code ?? null,
+          reason_human: errorInfo?.message ?? errStr ?? "Unknown error",
+        };
+        eventRows.push({
+          signature,
+          ix_index: ixIndex,
+          event_seq: nextSeq(ixIndex),
+          cluster,
+          slot,
+          block_time: blockTime,
+          market_pubkey: marketPubkey,
+          market_id: marketId,
+          kind: "PlaceBetBlocked",
+          actor,
+          args: decoded.args,
+          accounts: decoded.accounts,
+          success: false,
+          err: errStr,
+          decision: blockedDecision,
+        });
+      }
+    }
+
+    // Agents-table upserts derived from ix decode (cheap path; the more
+    // detailed policy / balance snapshots come from event decode below).
+    const ownerKey = decoded.accounts.owner;
+    if (ownerKey) {
+      const patch: AgentPatch = {
+        owner_pubkey: ownerKey,
+        last_event_at: eventTime,
+      };
+      try {
+        patch.agent_pda = agentPda(
+          conns.programId,
+          new PublicKey(ownerKey),
+        ).toBase58();
+      } catch {
+        /* malformed pubkey — drop */
+      }
+      if (decoded.name === "register_agent") {
+        patch.registered_at = eventTime;
+        const policy = (decoded.args.policy ?? null) as Record<string, unknown> | null;
+        if (policy) patch.current_policy = policyToSnake(policy);
+      }
+      agentPatches.push(patch);
+    }
 
     if (strikePricePatch && marketId !== null && marketPubkey) {
       marketPatches.push({
@@ -432,14 +652,108 @@ export async function ingestSignature(
     }
   }
 
-  // Order matters: write markets first to satisfy the FK in events.
+  // Anchor `#[event]` rows. Each one becomes its own row so the timeline can
+  // render them as first-class cards with the canonical PascalCase kind.
+  for (const ev of anchorEvents) {
+    const marketIdFromEv = eventNumber(ev.data, "market_id") ?? eventNumber(ev.data, "marketId");
+    const marketPubkeyFromEv =
+      marketIdFromEv !== null
+        ? marketPda(conns.programId, marketIdFromEv).toBase58()
+        : null;
+    if (marketPubkeyFromEv && !seenMarkets.has(marketPubkeyFromEv)) {
+      seenMarkets.add(marketPubkeyFromEv);
+      marketPatches.push({
+        market_pubkey: marketPubkeyFromEv,
+        market_id: marketIdFromEv as number,
+        patch: { updated_at: new Date().toISOString() },
+      });
+    }
+    const owner =
+      eventPubkey(ev.data, "owner") ??
+      eventPubkey(ev.data, "by") ??
+      fallbackActor;
+    const ixIndexForEvent = candidates[0]?.ixIndex ?? 0;
+    const seq = nextSeq(ixIndexForEvent);
+
+    eventRows.push({
+      signature,
+      ix_index: ixIndexForEvent,
+      event_seq: seq,
+      cluster,
+      slot,
+      block_time: blockTime,
+      market_pubkey: marketPubkeyFromEv,
+      market_id: marketIdFromEv,
+      kind: ev.name,
+      actor: owner,
+      args: ev.data,
+      accounts: {},
+      success: true,
+      err: null,
+      decision: null,
+    });
+
+    // Per-event agents table updates. Carries policy / balance snapshots into
+    // public.agents so the /agents pages don't have to scan the event stream.
+    if (ev.name === "AgentRegistered") {
+      const ownerPk = eventPubkey(ev.data, "owner");
+      const agentPk = eventPubkey(ev.data, "agent");
+      if (ownerPk) {
+        const patch: AgentPatch = {
+          owner_pubkey: ownerPk,
+          agent_pda: agentPk ?? undefined,
+          registered_at: eventTime,
+          last_event_at: eventTime,
+          current_policy: policyToSnake(
+            ev.data.policy as Record<string, unknown> | undefined,
+          ),
+        };
+        agentPatches.push(patch);
+      }
+    } else if (ev.name === "PolicyUpdated") {
+      const ownerPk = eventPubkey(ev.data, "owner");
+      const agentPk = eventPubkey(ev.data, "agent");
+      if (ownerPk) {
+        agentPatches.push({
+          owner_pubkey: ownerPk,
+          agent_pda: agentPk ?? undefined,
+          last_event_at: eventTime,
+          current_policy: policyToSnake(
+            (ev.data.new ?? ev.data.policy) as Record<string, unknown> | undefined,
+          ),
+        });
+      }
+    } else if (ev.name === "BetPlaced" || ev.name === "AgentSettled") {
+      const ownerPk = eventPubkey(ev.data, "owner");
+      if (ownerPk) {
+        agentPatches.push({
+          owner_pubkey: ownerPk,
+          last_event_at: eventTime,
+        });
+      }
+    } else if (ev.name === "Withdrawn") {
+      const ownerPk = eventPubkey(ev.data, "owner");
+      if (ownerPk) {
+        agentPatches.push({
+          owner_pubkey: ownerPk,
+          last_event_at: eventTime,
+        });
+      }
+    }
+  }
+
+  // Order matters: write markets first to satisfy the FK in events, then
+  // events, then the agents roll-up.
   await applyMarketPatches(marketPatches);
   await insertEvents(eventRows);
+  await applyAgentPatches(agentPatches);
 
   log.debug("ingested", {
     cluster,
     signature,
     decoded: candidates.length,
+    events: anchorEvents.length,
+    rows: eventRows.length,
   });
 
   return { decoded: candidates.length, written: eventRows.length, skipped: 0 };

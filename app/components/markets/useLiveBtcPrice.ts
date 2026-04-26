@@ -3,7 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Connection, PublicKey } from "@solana/web3.js";
 
-import { decodeOraclePriceFromAccountData } from "@/lib/oraclePrice";
+import {
+  decodeOraclePriceFromAccountData,
+  decodeOraclePublishTimeFromAccountData,
+} from "@/lib/oraclePrice";
 
 const DEFAULT_RPC = "https://devnet.magicblock.app";
 const DEFAULT_FEED = "71wtTRDY8Gxgw56bXFt2oc6qeAbTxzStdNiC425Z51sr";
@@ -27,6 +30,8 @@ export interface LiveBtcPrice {
   price: number | null;
   history: PricePoint[];
   lastTickAt: number | null;
+  /** Pyth `publish_time` in unix seconds (from the oracle account itself). */
+  publishTimeSec: number | null;
 }
 
 function rpcUrl(): string {
@@ -66,8 +71,10 @@ export function useLiveBtcPrice(): LiveBtcPrice {
     price: null,
     history: [],
     lastTickAt: null,
+    publishTimeSec: null,
   });
   const historyRef = useRef<PricePoint[]>([]);
+  const publishTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,6 +101,7 @@ export function useLiveBtcPrice(): LiveBtcPrice {
         price: model.smoothed,
         history: arr.slice(),
         lastTickAt: last?.time ?? null,
+        publishTimeSec: publishTimeRef.current,
       });
     };
 
@@ -143,6 +151,10 @@ export function useLiveBtcPrice(): LiveBtcPrice {
       if (cancelled || !info?.data) return;
       const decoded = decodeOraclePriceFromAccountData(info.data);
       if (decoded == null || !Number.isFinite(decoded)) return;
+      const pubTs = decodeOraclePublishTimeFromAccountData(info.data);
+      if (pubTs != null && Number.isFinite(pubTs)) {
+        publishTimeRef.current = pubTs;
+      }
       historyRef.current = seedPrebuffer(decoded);
       model.target = decoded;
       model.smoothed = decoded;
@@ -155,6 +167,10 @@ export function useLiveBtcPrice(): LiveBtcPrice {
       (info) => {
         const decoded = decodeOraclePriceFromAccountData(info.data);
         if (decoded == null || !Number.isFinite(decoded)) return;
+        const pubTs = decodeOraclePublishTimeFromAccountData(info.data);
+        if (pubTs != null && Number.isFinite(pubTs)) {
+          publishTimeRef.current = pubTs;
+        }
         setOracleTarget(decoded);
         startLoop();
       },

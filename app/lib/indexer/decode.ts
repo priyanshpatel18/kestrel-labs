@@ -1,4 +1,4 @@
-import { BorshInstructionCoder, BN, Idl } from "@coral-xyz/anchor";
+import { BorshEventCoder, BorshInstructionCoder, BN, Idl } from "@coral-xyz/anchor";
 import { PublicKey } from "@solana/web3.js";
 import bs58 from "bs58";
 
@@ -10,6 +10,62 @@ export const KESTREL_PROGRAM_ID = new PublicKey(
 );
 
 const coder = new BorshInstructionCoder(KESTREL_IDL);
+const eventCoder = new BorshEventCoder(KESTREL_IDL);
+
+/** Anchor program-data prefix that tags emitted #[event]s in the log stream. */
+const PROGRAM_DATA_LOG_PREFIX = "Program data: ";
+
+export interface DecodedKestrelEvent {
+  /** Canonical PascalCase event name from the IDL (e.g. `BetPlaced`). */
+  name: string;
+  /** Decoded event fields, normalised through `normalizeArgs`. */
+  data: Record<string, unknown>;
+  /** Order of this event in `logMessages` (used for the `event_seq` column). */
+  logIndex: number;
+}
+
+/**
+ * Anchor emits `#[event]`s as base64-encoded payloads on lines of the form
+ * `Program data: <b64>`. We scan the entire log stream and decode every
+ * Kestrel event we recognise; non-Kestrel events return `null` from the coder
+ * and are silently skipped.
+ */
+export function decodeKestrelEvents(
+  logs: ReadonlyArray<string> | null | undefined,
+): DecodedKestrelEvent[] {
+  if (!logs || logs.length === 0) return [];
+  const out: DecodedKestrelEvent[] = [];
+  for (let i = 0; i < logs.length; i++) {
+    const line = logs[i];
+    if (!line || !line.startsWith(PROGRAM_DATA_LOG_PREFIX)) continue;
+    const payload = line.slice(PROGRAM_DATA_LOG_PREFIX.length).trim();
+    if (!payload) continue;
+    let decoded: ReturnType<BorshEventCoder["decode"]> | null = null;
+    try {
+      decoded = eventCoder.decode(payload);
+    } catch {
+      decoded = null;
+    }
+    if (!decoded) continue;
+    const name = canonicalEventName(decoded.name);
+    out.push({
+      name,
+      data: normalizeArgs(decoded.data as unknown),
+      logIndex: i,
+    });
+  }
+  return out;
+}
+
+/**
+ * Anchor 0.30 lower-cases the first character of event names in some code
+ * paths (`betPlaced`) but our IDL ships them PascalCase. We normalise to
+ * PascalCase so the indexer's `kind` column always uses the documented form.
+ */
+function canonicalEventName(name: string): string {
+  if (!name) return name;
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
 
 const idlAccountsByIxName: Record<string, string[]> = (() => {
   const out: Record<string, string[]> = {};
@@ -56,7 +112,7 @@ export function decodeKestrelIx(
   }
 }
 
-function normalizeArgs(value: unknown): Record<string, unknown> {
+export function normalizeArgs(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object") return {};
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {

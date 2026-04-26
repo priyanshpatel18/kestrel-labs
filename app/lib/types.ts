@@ -12,8 +12,9 @@ export interface MarketRow {
   open_ts: number | null;
   close_ts: number | null;
   status: string | null;
-  strike_price: number | null;
-  close_price: number | null;
+  // Supabase can return `bigint` as string; callers should coerce as needed.
+  strike_price: number | string | null;
+  close_price: number | string | null;
   winner: string | null;
   created_sig: string | null;
   delegated_sig: string | null;
@@ -52,3 +53,22 @@ export const MARKET_STATUS = [
 ] as const;
 
 export type MarketStatus = (typeof MARKET_STATUS)[number];
+
+export type AgentRole = "market_ops" | "trader" | "risk_lp";
+
+/**
+ * Roll-up of an agent's lifecycle as the indexer + agent runtime see it.
+ * Mirrors the `public.agents` table from
+ * `app/supabase/migrations/0002_agent_trace.sql`.
+ */
+export interface AgentRow {
+  owner_pubkey: string;
+  agent_pda: string | null;
+  role: AgentRole | null;
+  label: string | null;
+  current_policy: Record<string, unknown> | null;
+  current_balance: number | string | null;
+  registered_at: string | null;
+  last_event_at: string | null;
+  updated_at: string;
+}

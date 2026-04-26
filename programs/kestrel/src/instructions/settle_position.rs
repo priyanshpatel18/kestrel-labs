@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 
 use crate::constants::{AGENT_SEED, MARKET_SEED};
 use crate::error::KestrelError;
+use crate::events::AgentSettled;
 use crate::state::{AgentProfile, Market, MarketStatus, Outcome};
 
 #[derive(Accounts)]
@@ -55,12 +56,22 @@ pub fn handler(ctx: Context<SettlePosition>, _id: u32, _agent_owner: Pubkey) -> 
         .checked_add(payout)
         .ok_or(KestrelError::MathOverflow)?;
 
+    let owner = agent.owner;
     msg!(
         "settle_position: agent={} market={} winner={:?} payout={}",
-        agent.owner,
+        owner,
         market_id,
         winner,
         payout
     );
+
+    emit!(AgentSettled {
+        owner,
+        market_id,
+        side_won: winner,
+        payout,
+        slot: Clock::get()?.slot,
+    });
+
     Ok(())
 }

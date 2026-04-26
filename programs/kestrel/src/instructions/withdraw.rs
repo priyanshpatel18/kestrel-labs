@@ -3,6 +3,7 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
 use crate::constants::{AGENT_SEED, CONFIG_SEED, VAULT_SEED};
 use crate::error::KestrelError;
+use crate::events::Withdrawn;
 use crate::state::{AgentProfile, Config};
 
 #[derive(Accounts)]
@@ -128,14 +129,26 @@ pub fn handler(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
 
     agent.try_serialize(&mut &mut data[..])?;
 
+    let owner = ctx.accounts.owner.key();
     msg!(
         "Withdraw: agent={} amount={} principal={} profit={} fee={} to_user={}",
-        ctx.accounts.owner.key(),
+        owner,
         amount,
         principal_returned,
         profit_returned,
         fee,
         to_user
     );
+
+    emit!(Withdrawn {
+        owner,
+        amount_gross: amount,
+        principal: principal_returned,
+        profit: profit_returned,
+        fee,
+        amount_net: to_user,
+        slot: Clock::get()?.slot,
+    });
+
     Ok(())
 }

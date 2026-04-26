@@ -6,6 +6,7 @@ import {
   clusterProgram,
 } from "./connections";
 import { DecodedKestrelIx } from "./decode";
+import { decodeKestrelErrorFromString } from "./errorMap";
 
 const DECISION_KINDS = new Set([
   "place_bet",
@@ -139,6 +140,15 @@ export async function buildDecisionCard(
   const shares =
     decoded.args.shares !== undefined ? String(decoded.args.shares) : null;
 
+  // For failed txs, surface the Anchor-named error so the UI can render
+  // `OverPolicyCap` / `OracleStale` / `MarketNotAllowed` cards instead of an
+  // opaque `Custom: 6011`. Falls through to the raw err string when the
+  // failure is not a Kestrel custom error.
+  const errInfo = success ? null : decodeKestrelErrorFromString(err);
+  const reasonName = errInfo?.name ?? null;
+  const reasonHuman = errInfo?.message ?? (success ? null : err);
+  const reasonCode = errInfo?.code ?? null;
+
   return {
     kind: decoded.name,
     side,
@@ -146,7 +156,9 @@ export async function buildDecisionCard(
     shares,
     strike_price: strike,
     accepted: success,
-    reason: success ? null : err,
+    reason: success ? null : reasonName ?? err,
+    reason_code: reasonCode,
+    reason_human: reasonHuman,
     policy,
   };
 }

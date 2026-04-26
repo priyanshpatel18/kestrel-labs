@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 
 use crate::constants::{CONFIG_SEED, MARKET_SEED};
 use crate::error::KestrelError;
+use crate::events::{MarketHalted, MarketResumed};
 use crate::state::{Config, Market, MarketStatus};
 
 #[derive(Accounts)]
@@ -28,16 +29,27 @@ pub fn handle_halt(ctx: Context<HaltMarket>, _id: u32) -> Result<()> {
     let market = &mut ctx.accounts.market;
     require!(market.status == MarketStatus::Open, KestrelError::MarketNotOpen);
     market.status = MarketStatus::Halted;
-    msg!("Market {} halted by admin", market.id);
+    let market_id = market.id;
+    let by = ctx.accounts.admin.key();
+    let slot = Clock::get()?.slot;
+    msg!("Market {} halted by admin", market_id);
+    emit!(MarketHalted { market_id, by, slot });
     Ok(())
 }
 
 pub fn handle_resume(ctx: Context<HaltMarket>, _id: u32) -> Result<()> {
     let market = &mut ctx.accounts.market;
     require!(market.status == MarketStatus::Halted, KestrelError::MarketNotOpen);
-    let now = Clock::get()?.unix_timestamp;
-    require!(now < market.close_ts, KestrelError::OutsideMarketWindow);
+    let clock = Clock::get()?;
+    require!(clock.unix_timestamp < market.close_ts, KestrelError::OutsideMarketWindow);
     market.status = MarketStatus::Open;
-    msg!("Market {} resumed by admin", market.id);
+    let market_id = market.id;
+    let by = ctx.accounts.admin.key();
+    msg!("Market {} resumed by admin", market_id);
+    emit!(MarketResumed {
+        market_id,
+        by,
+        slot: clock.slot,
+    });
     Ok(())
 }

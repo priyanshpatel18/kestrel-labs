@@ -16,12 +16,20 @@ export function TopNav() {
 
         <nav className="hidden items-center gap-5 text-sm text-muted-foreground sm:flex">
           {process.env.NODE_ENV !== "production" ? (
-            <Link
-              href="/markets"
-              className="transition-colors hover:text-foreground"
-            >
-              Markets
-            </Link>
+            <>
+              <Link
+                href="/markets"
+                className="transition-colors hover:text-foreground"
+              >
+                Markets
+              </Link>
+              <Link
+                href="/agents"
+                className="transition-colors hover:text-foreground"
+              >
+                Agents
+              </Link>
+            </>
           ) : null}
         </nav>
 

@@ -154,4 +154,28 @@
   .bg-brand {
     background-color: var(--brand);
   }
+
+  @keyframes kestrel-trade-toast {
+    0% {
+      transform: translate3d(0, 18px, 0);
+      opacity: 0;
+    }
+    25% {
+      transform: translate3d(0, 0, 0);
+      opacity: 1;
+    }
+    70% {
+      transform: translate3d(0, -2px, 0);
+      opacity: 1;
+    }
+    100% {
+      transform: translate3d(0, -10px, 0);
+      opacity: 0;
+    }
+  }
+
+  .animate-kestrel-trade-toast {
+    animation: kestrel-trade-toast 1100ms cubic-bezier(0.22, 1, 0.36, 1)
+      forwards;
+  }
 }

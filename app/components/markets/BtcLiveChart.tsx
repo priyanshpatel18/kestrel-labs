@@ -27,6 +27,11 @@ interface BtcLiveChartProps {
   /** Grey dotted "Target" line in USD. */
   priceToBeat?: number | null;
   height?: number;
+  tradeToasts?: Array<{
+    id: string;
+    side: "yes" | "no";
+    amount: number;
+  }>;
 }
 
 /** lightweight-charts only accepts hex/rgb/rgba — not lab()/oklch() from getComputedStyle. */
@@ -80,6 +85,7 @@ export function BtcLiveChart({
   history,
   priceToBeat,
   height = 300,
+  tradeToasts = [],
 }: BtcLiveChartProps) {
   const { resolvedTheme } = useTheme();
   const theme = resolvedTheme === "light" ? "light" : "dark";
@@ -266,11 +272,49 @@ export function BtcLiveChart({
     };
   }, [priceToBeat, c]);
 
+  const fmt = (n: number) =>
+    new Intl.NumberFormat(undefined, {
+      notation: "compact",
+      maximumFractionDigits: n >= 1000 ? 1 : 0,
+    }).format(n);
+
   return (
-    <div
-      ref={containerRef}
-      className="w-full"
-      style={{ height }}
-    />
+    <div className="relative w-full" style={{ height }}>
+      <div ref={containerRef} className="h-full w-full" />
+
+      {/* Trade indicator: left side overlay, non-interactive. */}
+      <div className="pointer-events-none absolute inset-y-0 left-0 flex w-16 items-center justify-center">
+        <div className="relative h-full w-full">
+          {tradeToasts.map((t, idx) => {
+            const isYes = t.side === "yes";
+            const color = isYes ? "text-up" : "text-down";
+            const bg = isYes ? "bg-[color:var(--up)]/12" : "bg-[color:var(--down)]/12";
+            const ring = isYes ? "ring-[color:var(--up)]/20" : "ring-[color:var(--down)]/20";
+            // Slight vertical stagger if multiple land in same frame.
+            const top = 58 + idx * 18;
+            return (
+              <div
+                key={t.id}
+                className={[
+                  "absolute left-2",
+                  "rounded-full px-2 py-1",
+                  "text-xs font-semibold tabular",
+                  color,
+                  bg,
+                  "ring-1",
+                  ring,
+                  "backdrop-blur",
+                  "motion-safe:animate-kestrel-trade-toast",
+                  "motion-reduce:opacity-100",
+                ].join(" ")}
+                style={{ top: `${top}%` }}
+              >
+                +{fmt(t.amount)}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }

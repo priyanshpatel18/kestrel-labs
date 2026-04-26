@@ -357,6 +357,26 @@ const isLocalnet =
     expect(acc.policy.maxOpenPositions).to.eq(8);
   });
 
+  it("update_policy rewrites the policy in place", async () => {
+    const tighter = {
+      maxStakePerWindow: new anchor.BN(2_000_000),
+      maxOpenPositions: 4,
+      allowedMarketsRoot: Array.from(new PublicKey(DEFAULT_BTC_FEED).toBytes()),
+      paused: false,
+    };
+    await program.methods
+      .updatePolicy(tighter)
+      .accounts({
+        owner: owner.publicKey,
+      })
+      .signers([owner])
+      .rpc();
+
+    const acc = await program.account.agentProfile.fetch(agent);
+    expect(acc.policy.maxStakePerWindow.toString()).to.eq("2000000");
+    expect(acc.policy.maxOpenPositions).to.eq(4);
+  });
+
   it("deposits USDC and increments balance", async () => {
     const amount = LOCAL_DEPOSIT_AMOUNT;
     const beforeAgent = await program.account.agentProfile.fetch(agent);
@@ -885,6 +905,7 @@ erDescribe("kestrel devnet ER", function () {
       .placeBet(marketId, { yes: {} } as any, BET)
       .accounts({
         owner: owner.publicKey,
+        priceUpdate: btcFeed,
       })
       .transaction();
     const sig1 = await sendErTx(tx1, [owner], { feePayer: owner });
@@ -894,10 +915,29 @@ erDescribe("kestrel devnet ER", function () {
       .placeBet(marketId, { no: {} } as any, BET)
       .accounts({
         owner: owner2.publicKey,
+        priceUpdate: btcFeed,
       })
       .transaction();
     const sig2 = await sendErTx(tx2, [owner2], { feePayer: owner2 });
     console.log("place_bet (owner2) on ER:", sig2);
+
+    // Decode emitted BetPlaced events to confirm the program is shipping
+    // typed Anchor events the indexer can subscribe to.
+    const tx1Info = await erConnection.getTransaction(sig1, {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0,
+    });
+    const logs = tx1Info?.meta?.logMessages ?? [];
+    const eventCoder = new anchor.BorshEventCoder(program.idl as anchor.Idl);
+    const decoded: { name: string; data: any }[] = [];
+    for (const line of logs) {
+      const m = line.match(/Program data:\s+(.+)$/);
+      if (!m) continue;
+      const ev = eventCoder.decode(m[1]);
+      if (ev) decoded.push({ name: ev.name, data: ev.data });
+    }
+    const bp = decoded.find((d) => d.name === "betPlaced" || d.name === "BetPlaced");
+    expect(bp, "expected BetPlaced event").to.exist;
   });
 
   it("cancel_bet closes the whole position on ER", async function () {

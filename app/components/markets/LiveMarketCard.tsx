@@ -10,16 +10,20 @@ import { RecentClosesStrip } from "./RecentClosesStrip";
 import { useLiveBtcPrice } from "./useLiveBtcPrice";
 import { getBrowserSupabase } from "@/lib/supabase/client";
 import { STRIKE_SCALE, formatPrice } from "@/lib/format";
-import type { MarketCloseOutcome, MarketRow } from "@/lib/types";
+import type { EventRow, MarketCloseOutcome, MarketRow } from "@/lib/types";
 
 interface LiveMarketCardProps {
   initialMarket: MarketRow | null;
   initialCloses: MarketCloseOutcome[];
 }
 
-function strikeToUsd(strike: number | null | undefined): number | null {
-  if (strike == null || !Number.isFinite(strike)) return null;
-  return Number(strike) / STRIKE_SCALE;
+function strikeToUsd(
+  strike: number | string | null | undefined,
+): number | null {
+  if (strike == null) return null;
+  const n = typeof strike === "string" ? Number(strike) : strike;
+  if (!Number.isFinite(n)) return null;
+  return n / STRIKE_SCALE;
 }
 
 function dateRangeLabel(openTs: number | null, closeTs: number | null): string {
@@ -46,6 +50,9 @@ export function LiveMarketCard({
   const [market, setMarket] = useState<MarketRow | null>(initialMarket);
   const [closes, setCloses] = useState<MarketCloseOutcome[]>(initialCloses);
   const { price, history } = useLiveBtcPrice();
+  const [tradeToasts, setTradeToasts] = useState<
+    Array<{ id: string; side: "yes" | "no"; amount: number }>
+  >([]);
 
   useEffect(() => {
     let supabase;
@@ -131,6 +138,62 @@ export function LiveMarketCard({
     };
   }, [market]);
 
+  useEffect(() => {
+    if (!market?.market_id) return;
+    let supabase;
+    try {
+      supabase = getBrowserSupabase();
+    } catch {
+      return;
+    }
+
+    const marketId = market.market_id;
+    const channel = supabase
+      .channel(`chart-toasts:market_${marketId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "events",
+          filter: `market_id=eq.${marketId}`,
+        },
+        (payload) => {
+          const row = payload.new as EventRow;
+          if (!row || row.kind !== "PlaceBetAttempted" || !row.success) return;
+          const intent =
+            (row.decision as any)?.intent ??
+            (row.args as any)?.intent ??
+            (row.args as any);
+          const sideRaw = String(intent?.side ?? "");
+          const side = sideRaw === "yes" || sideRaw === "no" ? sideRaw : null;
+          const amountRaw = intent?.amount ?? (row.args as any)?.amount;
+          const amountNum = Number(amountRaw);
+          if (!side || !Number.isFinite(amountNum) || amountNum <= 0) return;
+
+          const toast = {
+            id: row.id,
+            side,
+            amount: amountNum,
+          } as const;
+
+          setTradeToasts((prev) => {
+            const next = [...prev, toast].slice(-3);
+            return next;
+          });
+
+          window.setTimeout(() => {
+            setTradeToasts((prev) => prev.filter((t) => t.id !== toast.id));
+          }, 1200);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [market?.market_id]);
+
   const priceToBeat = useMemo(
     () => strikeToUsd(market?.strike_price ?? null),
     [market?.strike_price],
@@ -185,7 +248,11 @@ export function LiveMarketCard({
       </div>
 
       <div className="px-2 pb-2">
-        <BtcLiveChart history={history} priceToBeat={priceToBeat} />
+        <BtcLiveChart
+          history={history}
+          priceToBeat={priceToBeat}
+          tradeToasts={tradeToasts}
+        />
       </div>
     </section>
   );

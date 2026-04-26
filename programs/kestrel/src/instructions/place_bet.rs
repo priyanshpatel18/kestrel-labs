@@ -2,7 +2,8 @@ use anchor_lang::prelude::*;
 
 use crate::constants::{AGENT_SEED, MARKET_SEED};
 use crate::error::KestrelError;
-use crate::state::{AgentProfile, Market, MarketStatus, Outcome};
+use crate::events::BetPlaced;
+use crate::state::{read_oracle_price, AgentProfile, Market, MarketStatus, Outcome};
 
 #[derive(Accounts)]
 #[instruction(id: u32)]
@@ -23,10 +24,23 @@ pub struct PlaceBet<'info> {
         has_one = owner @ KestrelError::Unauthorized,
     )]
     pub agent: Account<'info, AgentProfile>,
+
+    /// CHECK: layout validated in `read_oracle_price`. Constrained to match
+    /// `market.oracle_feed` so a bet cannot be placed against a different feed
+    /// than the one the market resolves on. Freshness is enforced by
+    /// `read_oracle_price` (returns `OracleStale`).
+    #[account(address = market.oracle_feed @ KestrelError::OracleMismatch)]
+    pub price_update: AccountInfo<'info>,
 }
 
 pub fn handler(ctx: Context<PlaceBet>, _id: u32, side: Outcome, amount: u64) -> Result<()> {
     require!(amount > 0, KestrelError::InvalidAmount);
+
+    let clock = Clock::get()?;
+
+    // Oracle freshness gate: stale feed returns `OracleStale`, a deterministic
+    // on-chain block that the indexer surfaces as a `PlaceBetBlocked` row.
+    let _ = read_oracle_price(&ctx.accounts.price_update, &clock)?;
 
     let market = &mut ctx.accounts.market;
     let agent = &mut ctx.accounts.agent;
@@ -45,8 +59,7 @@ pub fn handler(ctx: Context<PlaceBet>, _id: u32, side: Outcome, amount: u64) -> 
     );
     require!(amount <= agent.balance, KestrelError::InsufficientBalance);
 
-    let now = Clock::get()?.unix_timestamp;
-    require!(now < market.close_ts, KestrelError::OutsideMarketWindow);
+    require!(clock.unix_timestamp < market.close_ts, KestrelError::OutsideMarketWindow);
 
     let amount_u = amount as u128;
     let (shares_out, new_yes, new_no) = match side {
@@ -157,6 +170,18 @@ pub fn handler(ctx: Context<PlaceBet>, _id: u32, side: Outcome, amount: u64) -> 
         market.yes_reserve,
         market.no_reserve,
     );
+
+    emit!(BetPlaced {
+        owner: agent.owner,
+        agent: agent.key(),
+        market_id,
+        side,
+        amount,
+        shares_out: shares_out_u64,
+        yes_reserve: market.yes_reserve,
+        no_reserve: market.no_reserve,
+        slot: clock.slot,
+    });
 
     Ok(())
 }
